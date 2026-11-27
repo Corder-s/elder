@@ -108,6 +108,16 @@ async function runStage3B2Tests() {
   });
 
   try {
+    // Clean up any leftover synthetic test rows from previous runs
+    await adminPool.query(
+      'DELETE FROM residents WHERE organization_id IN ($1, $2);',
+      [testOrgA, testOrgB]
+    );
+    await adminPool.query(
+      'DELETE FROM rooms WHERE organization_id IN ($1, $2);',
+      [testOrgA, testOrgB]
+    );
+
     await adminPool.query(`
       INSERT INTO organizations (id, name, slug, primary_email)
       VALUES 
