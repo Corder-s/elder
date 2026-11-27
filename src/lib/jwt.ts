@@ -5,14 +5,21 @@
 
 import { SignJWT, jwtVerify } from 'jose';
 
-const JWT_SECRET_STRING = process.env.JWT_SECRET || 'eldercare_saas_production_jwt_secret_key_2026_super_secure_32chars';
-const SECRET_KEY = new TextEncoder().encode(JWT_SECRET_STRING);
+function getSecretKey(): Uint8Array {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('JWT_SECRET environment variable must be configured with at least 32 characters.');
+  }
+  return new TextEncoder().encode(secret);
+}
 
 export interface EdgeSessionPayload {
+  sessionId?: string;
   userId: string;
   email: string;
   fullName: string;
   isPlatformAdmin: boolean;
+  mfaVerified?: boolean;
   activeOrgId: string | null;
   activeOrgSlug: string | null;
   activeOrgName: string | null;
@@ -23,18 +30,23 @@ export interface EdgeSessionPayload {
 }
 
 export async function signEdgeToken(payload: EdgeSessionPayload): Promise<string> {
-  return new SignJWT({ ...payload })
+  const jwt = new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('7d')
-    .sign(SECRET_KEY);
+    .setExpirationTime('7d');
+
+  if (payload.sessionId) {
+    jwt.setJti(payload.sessionId);
+  }
+
+  return jwt.sign(getSecretKey());
 }
 
 export async function verifyEdgeToken(token: string): Promise<EdgeSessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const { payload } = await jwtVerify(token, getSecretKey());
     return payload as unknown as EdgeSessionPayload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

@@ -14,14 +14,42 @@
 const { Pool } = require('pg');
 const assert = require('assert');
 
-// Connect as non-superuser application role eldercare_app to eldercareos_restore_test
-const appPool = new Pool({
-  user: 'eldercare_app',
-  password: 'eldercare_app_secure_pass_2026',
-  host: '127.0.0.1',
-  port: 5432,
-  database: 'eldercareos_restore_test',
-});
+const fs = require('fs');
+const path = require('path');
+
+// Load .env if present
+const rootEnvPath = path.resolve(__dirname, '../.env');
+if (fs.existsSync(rootEnvPath)) {
+  fs.readFileSync(rootEnvPath, 'utf8').split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const idx = trimmed.indexOf('=');
+      if (idx !== -1) {
+        const key = trimmed.substring(0, idx).trim();
+        const val = trimmed.substring(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (!process.env[key]) process.env[key] = val;
+      }
+    }
+  });
+}
+
+function getAppDbConfig(targetDb = 'eldercareos_restore_test') {
+  const appUrl = process.env.APP_DATABASE_URL || process.env.DATABASE_URL;
+  if (appUrl) {
+    const u = new URL(appUrl);
+    return {
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      host: u.hostname === 'localhost' ? '127.0.0.1' : u.hostname,
+      port: parseInt(u.port || '5432', 10),
+      database: targetDb,
+    };
+  }
+  throw new Error('DATABASE_URL or APP_DATABASE_URL must be configured in environment');
+}
+
+// Connect as non-superuser application role eldercare_app to isolated test database
+const appPool = new Pool(getAppDbConfig(process.env.TEST_DB_NAME || 'eldercareos_restore_test'));
 
 // Helper to execute operations within transaction-local tenant context
 async function withTenant(orgId, op) {

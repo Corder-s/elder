@@ -6,8 +6,8 @@ import { Shield, Lock, Mail, ArrowRight, Loader2, AlertCircle } from "lucide-rea
 
 export default function PlatformLoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("platform.admin@eldercareos.com");
-  const [password, setPassword] = useState("ElderCare@Admin2026!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,6 +30,11 @@ export default function PlatformLoginPage() {
 
       if (!data.user.isPlatformAdmin) {
         throw new Error("This account does not hold Platform Owner administrative privileges.");
+      }
+
+      if (data.mfaRequired || data.mfaSetupRequired) {
+        router.push("/platform/mfa");
+        return;
       }
 
       router.push("/platform/dashboard");

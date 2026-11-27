@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
-import { getDbPool } from '@/lib/db';
+import { verifyServerSession } from '@/lib/auth';
+import { queryPlatform, withPlatformContext } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.isPlatformAdmin) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const session = await verifyServerSession(req);
+    if (!session || !session.isPlatformAdmin || !session.mfaVerified) {
+      return NextResponse.json({ error: 'Unauthorized: MFA-verified Platform Owner required' }, { status: 403 });
     }
 
-    const pool = getDbPool();
     const query = `
       SELECT 
         o.id,
@@ -33,7 +31,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN subscription_plans sp ON ts.plan_id = sp.id
       ORDER BY o.created_at DESC;
     `;
-    const result = await pool.query(query);
+    const result = await queryPlatform(session, query);
 
     return NextResponse.json({ organizations: result.rows });
   } catch (error: any) {
@@ -43,10 +41,9 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.isPlatformAdmin) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const session = await verifyServerSession(req);
+    if (!session || !session.isPlatformAdmin || !session.mfaVerified) {
+      return NextResponse.json({ error: 'Unauthorized: MFA-verified Platform Owner required' }, { status: 403 });
     }
 
     const { organizationId, status } = await req.json();
@@ -54,18 +51,17 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid organizationId or status' }, { status: 400 });
     }
 
-    const pool = getDbPool();
-    await pool.query('UPDATE organizations SET status = $1 WHERE id = $2', [status, organizationId]);
+    await withPlatformContext(session, async (client) => {
+      await client.query('UPDATE organizations SET status = $1 WHERE id = $2', [status, organizationId]);
 
-    // Also update tenant_subscription status
-    const subStatus = status === 'active' ? 'active' : 'suspended';
-    await pool.query('UPDATE tenant_subscriptions SET status = $1 WHERE organization_id = $2', [subStatus, organizationId]);
+      const subStatus = status === 'active' ? 'active' : 'suspended';
+      await client.query('UPDATE tenant_subscriptions SET status = $1 WHERE organization_id = $2', [subStatus, organizationId]);
 
-    // Log to platform audit logs
-    await pool.query(`
-      INSERT INTO platform_audit_logs (actor_user_id, target_organization_id, action, resource_type, resource_id, details)
-      VALUES ($1, $2, $3, 'organization', $2::text, jsonb_build_object('new_status', $4::text));
-    `, [session.userId, organizationId, status === 'active' ? 'organization_activated' : 'organization_suspended', status]);
+      await client.query(`
+        INSERT INTO platform_audit_logs (actor_user_id, target_organization_id, action, resource_type, resource_id, details)
+        VALUES ($1, $2, $3, 'organization', $2::text, jsonb_build_object('new_status', $4::text));
+      `, [session.userId, organizationId, status === 'active' ? 'organization_activated' : 'organization_suspended', status]);
+    });
 
     return NextResponse.json({ success: true, message: `Organization status updated to ${status}` });
   } catch (error: any) {

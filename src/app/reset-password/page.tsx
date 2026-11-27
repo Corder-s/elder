@@ -1,15 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Lock, Eye, EyeOff, CheckCircle2, KeyRound } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [token, setToken] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -18,7 +19,14 @@ export default function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    const urlToken = searchParams.get("token");
+    if (urlToken) {
+      setToken(urlToken);
+    }
+  }, [searchParams]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -32,10 +40,23 @@ export default function ResetPasswordPage() {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, newPassword: password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to reset password.");
+        return;
+      }
       setIsSuccess(true);
-    }, 450);
+    } catch {
+      setError("Network error while resetting password.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -75,7 +96,7 @@ export default function ResetPasswordPage() {
                 Password Updated!
               </h3>
               <p className="text-xs text-[#686581] mt-1 leading-relaxed">
-                Your password has been reset securely. You can now log in with your updated credentials.
+                Your password has been reset securely and all previous sessions were signed out.
               </p>
             </div>
 
@@ -99,14 +120,14 @@ export default function ResetPasswordPage() {
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[#17133A] flex items-center gap-1.5">
                 <KeyRound className="h-3.5 w-3.5 text-[#6D28D9]" />
-                <span>Reset Token / Verification Code</span>
+                <span>Reset Token</span>
               </label>
               <Input
                 type="text"
                 required
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder="6-digit code or token"
+                placeholder="Paste your one-time reset token"
                 className="h-11 rounded-2xl border-[#E8E1F5] bg-[#FAF8FF] text-xs focus:ring-[#6D28D9]"
               />
             </div>
@@ -122,7 +143,7 @@ export default function ResetPasswordPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimum 8 characters"
+                  placeholder="Min 8 chars, upper, lower, digit & symbol"
                   className="h-11 rounded-2xl border-[#E8E1F5] bg-[#FAF8FF] text-xs pr-10 focus:ring-[#6D28D9]"
                 />
                 <button
@@ -155,7 +176,7 @@ export default function ResetPasswordPage() {
               disabled={isLoading || !token || !password || !confirmPassword}
               className="w-full bg-gradient-to-r from-[#6D28D9] to-[#8B5CF6] hover:opacity-95 text-white h-11 rounded-2xl font-bold text-sm shadow-soft transition-all"
             >
-              {isLoading ? "Updating..." : "Update Password"}
+              {isLoading ? "Updating Credentials..." : "Reset Password"}
             </Button>
           </form>
         )}
@@ -164,9 +185,17 @@ export default function ResetPasswordPage() {
       {/* Footer */}
       <div className="text-center pt-4">
         <Link href="/login" className="text-xs font-bold text-[#6D28D9] hover:underline">
-          Return to Sign In
+          Back to Sign In
         </Link>
       </div>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#FAF8FF]" />}>
+      <ResetPasswordForm />
+    </Suspense>
   );
 }

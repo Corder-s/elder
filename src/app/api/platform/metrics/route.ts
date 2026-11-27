@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
-import { getDbPool } from '@/lib/db';
+import { verifyServerSession } from '@/lib/auth';
+import { queryPlatform, PlatformAuthorizationError } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.isPlatformAdmin) {
-      return NextResponse.json({ error: 'Unauthorized: Platform Owner privilege required' }, { status: 403 });
+    const session = await verifyServerSession(req);
+    if (!session || !session.isPlatformAdmin || !session.mfaVerified) {
+      return NextResponse.json(
+        { error: 'Unauthorized: MFA-verified Platform Owner privilege required' },
+        { status: 403 }
+      );
     }
 
-    const pool = getDbPool();
-
     // 1. Organization Status Breakdown
-    const orgStats = await pool.query(`
+    const orgStats = await queryPlatform(session, `
       SELECT 
         count(*) as total,
         count(*) FILTER (WHERE status = 'active') as active,
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     `);
 
     // 2. Revenue Metrics (MRR & ARR from active subscriptions)
-    const revStats = await pool.query(`
+    const revStats = await queryPlatform(session, `
       SELECT 
         COALESCE(SUM(
           CASE 
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     `);
 
     // 3. Total Aggregated Residents & Branches across all NGOs
-    const usageStats = await pool.query(`
+    const usageStats = await queryPlatform(session, `
       SELECT 
         COALESCE(SUM(metric_value) FILTER (WHERE metric_name = 'residents_count'), 0) as total_residents,
         COALESCE(SUM(metric_value) FILTER (WHERE metric_name = 'branches_count'), 0) as total_branches

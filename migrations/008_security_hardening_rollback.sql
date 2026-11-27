@@ -3,9 +3,8 @@
 
 BEGIN;
 
--- 1. Drop New Security Tables
-DROP TABLE IF EXISTS resident_family_links CASCADE;
-DROP TABLE IF EXISTS user_verification_tokens CASCADE;
+-- 1. Preserve Security & Relationship Tables (Do NOT drop user_verification_tokens or resident_family_links)
+-- Routine rollback must not destroy pending verification tokens or family-resident authorization links.
 
 -- 2. Drop Composite Foreign Keys
 ALTER TABLE IF EXISTS admissions DROP CONSTRAINT IF EXISTS fk_admissions_org_resident;

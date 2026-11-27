@@ -159,7 +159,123 @@ export default function SettingsPage() {
             <ChevronRight className="h-4 w-4 text-[#686581]" />
           </Link>
         </div>
+
+        <ActiveSessionsPanel />
       </div>
     </AppShell>
+  );
+}
+
+function ActiveSessionsPanel() {
+  const [sessions, setSessions] = React.useState<Array<{
+    id: string;
+    deviceName: string;
+    ipAddress: string | null;
+    isCurrent: boolean;
+    lastActiveAt: string;
+  }>>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [statusMsg, setStatusMsg] = React.useState<string | null>(null);
+
+  const loadSessions = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/sessions");
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions || []);
+      }
+    } catch {
+      // Ignore if unauthenticated in preview mode
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  const handleRevokeOne = async (id: string) => {
+    const res = await fetch(`/api/auth/sessions/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setStatusMsg("Session revoked.");
+      loadSessions();
+    }
+  };
+
+  const handleRevokeAll = async () => {
+    const res = await fetch("/api/auth/revoke-all-sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keepCurrent: false }),
+    });
+    if (res.ok) {
+      window.location.href = "/login";
+    }
+  };
+
+  return (
+    <div className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-xs font-black text-[#17133A] uppercase tracking-wider">
+            Active Sessions
+          </h3>
+          <p className="text-[10px] text-[#686581]">
+            Manage signed-in devices and revoke remote access
+          </p>
+        </div>
+        <Button
+          type="button"
+          onClick={handleRevokeAll}
+          className="h-8 px-3 rounded-xl bg-[#FFE4E6] text-[#E11D48] hover:bg-[#FECDD3] text-[11px] font-bold"
+        >
+          Logout All Devices
+        </Button>
+      </div>
+
+      {statusMsg && (
+        <p className="text-[11px] font-semibold text-[#16A34A]">{statusMsg}</p>
+      )}
+
+      {loading ? (
+        <p className="text-xs text-[#686581]">Loading active sessions...</p>
+      ) : sessions.length === 0 ? (
+        <p className="text-xs text-[#686581]">No active server sessions found.</p>
+      ) : (
+        <div className="space-y-2">
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center justify-between p-2.5 rounded-2xl bg-[#FAF8FF] border border-[#E8E1F5]"
+            >
+              <div>
+                <p className="text-xs font-bold text-[#17133A] flex items-center gap-1.5">
+                  <span>{s.deviceName}</span>
+                  {s.isCurrent && (
+                    <Badge variant="purple" className="text-[9px] px-1.5 py-0">
+                      Current
+                    </Badge>
+                  )}
+                </p>
+                <p className="text-[10px] text-[#686581]">
+                  IP: {s.ipAddress || "Unknown"} • Last active{" "}
+                  {new Date(s.lastActiveAt).toLocaleString()}
+                </p>
+              </div>
+              {!s.isCurrent && (
+                <button
+                  type="button"
+                  onClick={() => handleRevokeOne(s.id)}
+                  className="text-[11px] font-bold text-[#E11D48] hover:underline"
+                >
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

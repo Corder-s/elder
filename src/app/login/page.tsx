@@ -19,39 +19,53 @@ import { RoleType } from "@/types";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, availableRoles } = useAuth();
-  const [email, setEmail] = useState("admin@sriseva-ashram.org");
-  const [password, setPassword] = useState("••••••••••••");
+  const { refreshSession } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedRole, setSelectedRole] = useState<RoleType>("ngo_admin");
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [needsVerification, setNeedsVerification] = useState(false);
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    setNeedsVerification(false);
     setIsLoading(true);
-    setTimeout(() => {
-      login(email, selectedRole);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.requiresVerification) {
+          setNeedsVerification(true);
+        }
+        setError(data.error || "Invalid email or password");
+        return;
+      }
+      await refreshSession();
+      if (data.user?.isPlatformAdmin) {
+        router.push(data.mfaRequired || data.mfaSetupRequired ? "/platform/mfa" : "/platform/dashboard");
+      } else {
+        router.push("/");
+      }
+    } catch {
+      setError("Unable to reach authentication server.");
+    } finally {
       setIsLoading(false);
-      router.push("/");
-    }, 300);
+    }
   };
 
   const handleGoogleSignIn = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      login("google.user@sriseva-ashram.org", selectedRole);
-      setIsLoading(false);
-      router.push("/");
-    }, 250);
+    setError("Google SSO is not enabled for this workspace. Please sign in with your email and password.");
   };
 
   const handleMicrosoftSignIn = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      login("ms.user@sriseva-ashram.org", selectedRole);
-      setIsLoading(false);
-      router.push("/");
-    }, 250);
+    setError("Microsoft SSO is not enabled for this workspace. Please sign in with your email and password.");
   };
 
   return (
@@ -114,6 +128,16 @@ export default function LoginPage() {
 
         {/* Form Inputs matching Reference Screen 2 */}
         <form onSubmit={handleSignIn} className="space-y-3.5">
+          {error && (
+            <div className="p-3 rounded-2xl bg-[#FFE4E6] border border-[#FDA4AF] text-[#E11D48] text-xs font-semibold space-y-1">
+              <p>{error}</p>
+              {needsVerification && (
+                <Link href="/email-verification" className="underline font-bold block">
+                  Verify Email Address →
+                </Link>
+              )}
+            </div>
+          )}
           {/* Email */}
           <div className="relative flex items-center">
             <Mail className="absolute left-3.5 h-4 w-4 text-[#686581] pointer-events-none" />

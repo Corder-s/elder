@@ -11,14 +11,29 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Unable to send reset instructions.");
+        return;
+      }
       setIsSubmitted(true);
-    }, 400);
+    } catch {
+      setError("Network error while requesting password reset.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -81,6 +96,11 @@ export default function ForgotPasswordPage() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="p-6 rounded-3xl bg-white border border-[#E8E1F5] shadow-card space-y-4">
+            {error && (
+              <div className="p-3 rounded-xl bg-[#FFE4E6] text-[#E11D48] text-xs font-semibold">
+                {error}
+              </div>
+            )}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[#17133A] flex items-center gap-1.5">
                 <Mail className="h-3.5 w-3.5 text-[#6D28D9]" />

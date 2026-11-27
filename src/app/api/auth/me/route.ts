@@ -1,31 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken, getUserMemberships } from '@/lib/auth';
+import { verifyServerSession, getUserMemberships, clearSessionCookie } from '@/lib/auth';
+import { getDbPool } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
-    const cookieToken = req.cookies.get('eldercare_session')?.value;
-    const authHeader = req.headers.get('authorization');
-    const headerToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-    const token = cookieToken || headerToken;
-
-    if (!token) {
-      return NextResponse.json({ authenticated: false, session: null }, { status: 401 });
-    }
-
-    const session = await verifyToken(token);
+    const session = await verifyServerSession(req);
     if (!session) {
-      return NextResponse.json({ authenticated: false, session: null }, { status: 401 });
+      const res = NextResponse.json({ authenticated: false, session: null }, { status: 401 });
+      clearSessionCookie(res);
+      return res;
     }
 
     const memberships = await getUserMemberships(session.userId);
+    const pool = getDbPool();
+    const userRes = await pool.query(
+      'SELECT mfa_enabled, email_verified_at FROM users WHERE id = $1',
+      [session.userId]
+    );
+    const userFlags = userRes.rows[0] || {};
 
     return NextResponse.json({
       authenticated: true,
       session,
       memberships,
+      mfaEnabled: Boolean(userFlags.mfa_enabled),
+      emailVerified: Boolean(userFlags.email_verified_at),
     });
   } catch (error: any) {
     console.error('Auth verification error:', error);
-    return NextResponse.json({ authenticated: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ authenticated: false, error: 'Session verification failed' }, { status: 500 });
   }
 }

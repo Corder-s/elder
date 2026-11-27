@@ -26,8 +26,11 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function seed() {
   try {
-    const email = 'platform.admin@eldercareos.com';
-    const password = 'ElderCare@Admin2026!';
+    const email = process.env.PLATFORM_ADMIN_EMAIL || 'platform.admin@eldercareos.com';
+    const password = process.env.PLATFORM_ADMIN_PASSWORD;
+    if (!password || password.length < 12) {
+      throw new Error('PLATFORM_ADMIN_PASSWORD environment variable (min 12 chars) is required to seed Platform Admin.');
+    }
     const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(password, salt);
 

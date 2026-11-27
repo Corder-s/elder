@@ -10,6 +10,21 @@ const path = require('path');
 const assert = require('assert');
 const { execSync } = require('child_process');
 
+const rootEnvPath = path.resolve(__dirname, '../.env');
+if (fs.existsSync(rootEnvPath)) {
+  fs.readFileSync(rootEnvPath, 'utf8').split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const idx = trimmed.indexOf('=');
+      if (idx !== -1) {
+        const key = trimmed.substring(0, idx).trim();
+        const val = trimmed.substring(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (!process.env[key]) process.env[key] = val;
+      }
+    }
+  });
+}
+
 const backendEnvPath = 'C:\\Users\\Shubham Saini\\Desktop\\new project\\backend\\.env';
 let pgUser = 'postgres';
 let pgPass = '';
@@ -61,11 +76,16 @@ async function testStage3B2() {
   await superPool.query('REVOKE UPDATE, DELETE, TRUNCATE ON tenant_audit_logs FROM eldercare_app;');
   await superPool.query('REVOKE UPDATE, DELETE, TRUNCATE ON platform_audit_logs FROM eldercare_app;');
 
+  const appUrl = process.env.DATABASE_URL;
+  if (!appUrl) {
+    throw new Error('DATABASE_URL must be configured in .env or environment');
+  }
+  const parsedAppUrl = new URL(appUrl);
   const appPool = new Pool({
-    user: 'eldercare_app',
-    password: 'eldercare_app_secure_pass_2026',
-    host: pgHost,
-    port: pgPort,
+    user: decodeURIComponent(parsedAppUrl.username),
+    password: decodeURIComponent(parsedAppUrl.password),
+    host: parsedAppUrl.hostname === 'localhost' ? '127.0.0.1' : parsedAppUrl.hostname,
+    port: parseInt(parsedAppUrl.port || '5432', 10),
     database: 'eldercareos_restore_test',
   });
 

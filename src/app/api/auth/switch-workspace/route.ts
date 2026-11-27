@@ -1,29 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken, buildSessionPayload, signToken } from '@/lib/auth';
+import {
+  verifyServerSession,
+  buildSessionPayload,
+  signToken,
+  setSessionCookie,
+} from '@/lib/auth';
+import { getDbPool } from '@/lib/db';
+import { getClientMetadata, logAuthSecurityEvent } from '@/lib/security';
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieToken = req.cookies.get('eldercare_session')?.value;
-    const authHeader = req.headers.get('authorization');
-    const token = cookieToken || (authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null);
-
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const currentSession = await verifyToken(token);
+    const currentSession = await verifyServerSession(req);
     if (!currentSession) {
       return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
     }
 
     const { organizationId } = await req.json();
-    if (!organizationId) {
+    if (!organizationId || typeof organizationId !== 'string') {
       return NextResponse.json({ error: 'Target organizationId is required' }, { status: 400 });
     }
 
-    // Re-mint scoped session token for the new organization
-    const newSession = await buildSessionPayload(currentSession.userId, organizationId);
+    // Re-mint scoped session payload (strictly validates active membership & active org)
+    const newSession = await buildSessionPayload(currentSession.userId, organizationId, {
+      sessionId: currentSession.sessionId,
+      mfaVerified: currentSession.mfaVerified,
+    });
+
+    if (currentSession.sessionId) {
+      const pool = getDbPool();
+      await pool.query(
+        'UPDATE user_sessions SET active_organization_id = $1, last_active_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [newSession.activeOrgId, currentSession.sessionId]
+      );
+    }
+
     const newToken = await signToken(newSession);
+    const { ipAddress, userAgent } = getClientMetadata(req);
+    await logAuthSecurityEvent({
+      userId: currentSession.userId,
+      organizationId: newSession.activeOrgId,
+      eventType: 'workspace_switched',
+      ipAddress,
+      userAgent,
+      details: {
+        fromOrgId: currentSession.activeOrgId,
+        toOrgId: newSession.activeOrgId,
+      },
+    });
 
     const response = NextResponse.json({
       success: true,
@@ -31,17 +54,13 @@ export async function POST(req: NextRequest) {
       token: newToken,
     });
 
-    response.cookies.set('eldercare_session', newToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7,
-    });
-
+    setSessionCookie(response, newToken);
     return response;
   } catch (error: any) {
     console.error('Switch workspace error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to switch workspace' }, { status: 400 });
+    return NextResponse.json(
+      { error: error.message || 'Forbidden: Unable to switch workspace' },
+      { status: 403 }
+    );
   }
 }

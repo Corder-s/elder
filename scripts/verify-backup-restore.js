@@ -75,8 +75,13 @@ async function verifyBackup() {
   await sourcePool.end();
   console.log(`  Verified ${Object.keys(sourceCounts).length} tables in source database.`);
 
-  // Create isolated restore test database
-  console.log('\n🧪 [3/4] Creating isolated test database (eldercareos_restore_test)...');
+  // Create isolated restore test database (never overwrite an existing database)
+  const targetDb = process.env.RESTORE_TEST_DB || `eldercareos_restore_test_${Date.now()}`;
+  if (targetDb === 'eldercareos' || targetDb === 'postgres') {
+    throw new Error(`Refusing to restore into protected database: ${targetDb}`);
+  }
+
+  console.log(`\n🧪 [3/4] Creating isolated test database (${targetDb})...`);
   const adminPool = new Pool({
     user: pgUser,
     password: pgPass,
@@ -84,24 +89,26 @@ async function verifyBackup() {
     port: pgPort,
     database: 'postgres',
   });
-  await adminPool.query('DROP DATABASE IF EXISTS eldercareos_restore_test WITH (FORCE);');
-  await adminPool.query('CREATE DATABASE eldercareos_restore_test;');
-  await adminPool.end();
-  console.log('  Isolated database created successfully.');
 
-  // Restore dump into eldercareos_restore_test
-  console.log('\n📥 [4/4] Restoring backup into isolated database...');
-  const psqlPath = '"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe"';
-  
-  const env = { ...process.env, PGPASSWORD: pgPass };
-  const restoreCmd = `${psqlPath} -U ${pgUser} -h ${pgHost} -p ${pgPort} -d eldercareos_restore_test -f "${backupFile}"`;
-  
-  try {
-    execSync(restoreCmd, { env, stdio: 'pipe' });
-    console.log('  Restore command executed cleanly without fatal errors.');
-  } catch (err) {
-    console.warn('  Restore output note:', err.message);
+  const existingDb = await adminPool.query('SELECT 1 FROM pg_database WHERE datname = $1', [targetDb]);
+  if (existingDb.rows.length > 0) {
+    await adminPool.end();
+    throw new Error(`Refusing to overwrite existing database "${targetDb}". Provide a fresh RESTORE_TEST_DB name.`);
   }
+
+  await adminPool.query(`CREATE DATABASE "${targetDb}";`);
+  await adminPool.end();
+  console.log(`  Isolated database ${targetDb} created successfully.`);
+
+  // Restore dump into isolated test database with ON_ERROR_STOP=1
+  console.log(`\n📥 [4/4] Restoring backup into ${targetDb}...`);
+  const psqlPath = '"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe"';
+
+  const env = { ...process.env, PGPASSWORD: pgPass };
+  const restoreCmd = `${psqlPath} -v ON_ERROR_STOP=1 -U ${pgUser} -h ${pgHost} -p ${pgPort} -d "${targetDb}" -f "${backupFile}"`;
+
+  execSync(restoreCmd, { env, stdio: 'pipe' });
+  console.log('  Restore command executed cleanly without fatal errors.');
 
   // Verify restored database tables and record counts
   const testPool = new Pool({
@@ -109,7 +116,7 @@ async function verifyBackup() {
     password: pgPass,
     host: pgHost,
     port: pgPort,
-    database: 'eldercareos_restore_test',
+    database: targetDb,
   });
   const testTablesRes = await testPool.query(`
     SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
