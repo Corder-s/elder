@@ -1,19 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
 import { withTenantContext } from '@/lib/db';
+import { requireTenantPermission, isFamilyRole, getFamilyResidentLinks } from '@/lib/rbac';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const authz = await requireTenantPermission(req, ['document:read', 'family:resident:view_own']);
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
+    const orgId = session.activeOrgId!;
     const { searchParams } = new URL(req.url);
     const residentId = searchParams.get('residentId');
 
-    const documents = await withTenantContext(session.activeOrgId, async (client) => {
+    const familyMode = isFamilyRole(session.roleSlug);
+    let linkedIds: string[] | null = null;
+    if (familyMode) {
+      const links = await getFamilyResidentLinks(orgId, session.userId);
+      linkedIds = links.map((l) => l.residentId);
+      if (residentId && !linkedIds.includes(residentId)) {
+        return NextResponse.json(
+          { error: 'Forbidden: You cannot access documents for this resident' },
+          { status: 403 }
+        );
+      }
+      if (linkedIds.length === 0) {
+        return NextResponse.json({ documents: [] });
+      }
+    }
+
+    const canViewConfidential = ['admin', 'doctor', 'accountant'].includes(session.roleSlug || '');
+
+    const documents = await withTenantContext(orgId, async (client) => {
       let query = `
         SELECT 
           d.id,
@@ -30,11 +47,20 @@ export async function GET(req: NextRequest) {
         FROM documents d
         LEFT JOIN residents r ON d.resident_id = r.id
         LEFT JOIN users u ON d.uploaded_by = u.id
+        WHERE 1=1
       `;
       const params: any[] = [];
       if (residentId) {
         params.push(residentId);
-        query += ` WHERE d.resident_id = $1`;
+        query += ` AND d.resident_id = $${params.length}`;
+      }
+      if (linkedIds) {
+        params.push(linkedIds);
+        query += ` AND d.resident_id = ANY($${params.length}::uuid[])`;
+      }
+      if (!canViewConfidential) {
+        params.push(session.userId);
+        query += ` AND (d.is_confidential = false OR d.uploaded_by = $${params.length})`;
       }
       query += ` ORDER BY d.created_at DESC;`;
 
@@ -50,11 +76,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const authz = await requireTenantPermission(req, 'document:upload');
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
     const body = await req.json();
     const { title, documentType, fileName, fileSizeBytes, mimeType, residentId, isConfidential = false } = body;
@@ -64,7 +88,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Tenant-isolated S3 key structure: tenants/{orgId}/documents/{uuid}-{fileName}
-    const safeOrgId = session.activeOrgId;
+    const safeOrgId = session.activeOrgId!;
     const timestamp = Date.now();
     const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const s3Key = `tenants/${safeOrgId}/documents/${timestamp}_${cleanFileName}`;

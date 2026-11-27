@@ -1,20 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
-import { withTenantContext, getDbPool } from '@/lib/db';
+import { withTenantContext } from '@/lib/db';
+import { requireTenantPermission, isFamilyRole, getFamilyResidentLinks } from '@/lib/rbac';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized: No active organization workspace' }, { status: 401 });
-    }
+    const authz = await requireTenantPermission(req, ['resident:read', 'family:resident:view_own']);
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
+    const orgId = session.activeOrgId!;
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search') || '';
     const status = searchParams.get('status') || '';
 
-    const residents = await withTenantContext(session.activeOrgId, async (client) => {
+    const familyMode = isFamilyRole(session.roleSlug);
+    let linkedIds: string[] | null = null;
+    if (familyMode) {
+      const links = await getFamilyResidentLinks(orgId, session.userId);
+      linkedIds = links.map((l) => l.residentId);
+      if (linkedIds.length === 0) {
+        return NextResponse.json({ residents: [] });
+      }
+    }
+
+    const residents = await withTenantContext(orgId, async (client) => {
       let query = `
         SELECT 
           id,
@@ -37,6 +46,16 @@ export async function GET(req: NextRequest) {
         WHERE is_deleted = false
       `;
       const params: any[] = [];
+
+      if (linkedIds) {
+        params.push(linkedIds);
+        query += ` AND id = ANY($${params.length}::uuid[])`;
+      }
+
+      if (session.branchId && session.roleSlug !== 'admin') {
+        params.push(session.branchId);
+        query += ` AND (branch_id = $${params.length} OR branch_id IS NULL)`;
+      }
 
       if (search) {
         params.push(`%${search.toLowerCase()}%`);
@@ -63,16 +82,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const authz = await requireTenantPermission(req, 'resident:create');
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
-    // Permission check
-    if (!session.permissions.includes('resident:create') && session.roleSlug !== 'admin' && !session.isPlatformAdmin) {
-      return NextResponse.json({ error: 'Forbidden: Insufficient permissions to admit resident' }, { status: 403 });
-    }
+    const orgId = session.activeOrgId!;
 
     const body = await req.json();
     const {
@@ -89,46 +103,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Full name and gender are required' }, { status: 400 });
     }
 
-    const pool = getDbPool();
+    // 1. Quota Enforcement inside Tenant RLS Context
+    const quotaError = await withTenantContext(orgId, async (client) => {
+      const subRes = await client.query(`
+        SELECT sp.resident_limit, ts.status AS sub_status
+        FROM tenant_subscriptions ts
+        JOIN subscription_plans sp ON ts.plan_id = sp.id
+        WHERE ts.organization_id = $1;
+      `, [orgId]);
 
-    // 1. Quota Enforcement: Check subscription limits
-    const subRes = await pool.query(`
-      SELECT sp.resident_limit, ts.status AS sub_status
-      FROM tenant_subscriptions ts
-      JOIN subscription_plans sp ON ts.plan_id = sp.id
-      WHERE ts.organization_id = $1;
-    `, [session.activeOrgId]);
+      if (subRes.rows.length > 0) {
+        const { resident_limit, sub_status } = subRes.rows[0];
+        if (sub_status === 'suspended') {
+          return {
+            error: 'Subscription suspended. Read-only healthcare safety mode is active. Cannot admit new residents.',
+          };
+        }
 
-    if (subRes.rows.length > 0) {
-      const { resident_limit, sub_status } = subRes.rows[0];
+        const countRes = await client.query(`
+          SELECT count(*) as count 
+          FROM residents 
+          WHERE organization_id = $1 AND is_deleted = false AND resident_status IN ('active', 'hospitalized', 'temporary_leave');
+        `, [orgId]);
 
-      // Healthcare Safety: Suspended accounts cannot add new residents
-      if (sub_status === 'suspended') {
-        return NextResponse.json({
-          error: 'Subscription suspended. Read-only healthcare safety mode is active. Cannot admit new residents.',
-        }, { status: 403 });
+        const currentCount = parseInt(countRes.rows[0].count, 10);
+        if (currentCount >= resident_limit) {
+          return {
+            error: `Resident quota reached (${currentCount}/${resident_limit}). Please upgrade your subscription plan to admit more residents.`,
+            quotaExceeded: true,
+            currentCount,
+            limit: resident_limit,
+          };
+        }
       }
+      return null;
+    });
 
-      // Check current active resident count
-      const countRes = await pool.query(`
-        SELECT count(*) as count 
-        FROM residents 
-        WHERE organization_id = $1 AND is_deleted = false AND resident_status IN ('active', 'hospitalized', 'temporary_leave');
-      `, [session.activeOrgId]);
-
-      const currentCount = parseInt(countRes.rows[0].count, 10);
-      if (currentCount >= resident_limit) {
-        return NextResponse.json({
-          error: `Resident quota reached (${currentCount}/${resident_limit}). Please upgrade your subscription plan to admit more residents.`,
-          quotaExceeded: true,
-          currentCount,
-          limit: resident_limit,
-        }, { status: 403 });
-      }
+    if (quotaError) {
+      return NextResponse.json(quotaError, { status: 403 });
     }
 
     // 2. Insert Resident within Tenant Transaction
-    const newResident = await withTenantContext(session.activeOrgId, async (client) => {
+    const newResident = await withTenantContext(orgId, async (client) => {
       // Auto-generate resident number
       const numRes = await client.query(`
         SELECT COALESCE(MAX(SUBSTRING(resident_number FROM '[0-9]+')::integer), 0) + 1 AS next_num

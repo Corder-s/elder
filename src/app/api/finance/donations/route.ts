@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
 import { withTenantContext } from '@/lib/db';
+import { requireTenantPermission } from '@/lib/rbac';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const authz = await requireTenantPermission(req, 'finance:donation:read');
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
-    const donations = await withTenantContext(session.activeOrgId, async (client) => {
+    const donations = await withTenantContext(session.activeOrgId!, async (client) => {
       const res = await client.query(`
         SELECT 
           id,
@@ -40,16 +38,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Role check: Admin or Accountant
-    if (!['accountant', 'admin'].includes(session.roleSlug || '') && !session.isPlatformAdmin) {
-      return NextResponse.json({ error: 'Forbidden: Donation creation restricted to finance roles' }, { status: 403 });
-    }
+    const authz = await requireTenantPermission(req, 'finance:donation:create');
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
     const body = await req.json();
     const { donorName, donorEmail, donorPhone, donorPan, amount, paymentMethod = 'upi', referenceNumber } = body;
@@ -58,7 +49,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Donor name and valid amount are required' }, { status: 400 });
     }
 
-    const newDonation = await withTenantContext(session.activeOrgId, async (client) => {
+    const newDonation = await withTenantContext(session.activeOrgId!, async (client) => {
       // Auto-generate 80G receipt number: e.g. 80G-YYYYMM-001
       const yearMonth = new Date().toISOString().slice(0, 7).replace('-', '');
       const countRes = await client.query(`

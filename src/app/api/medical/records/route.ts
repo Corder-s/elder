@@ -1,19 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
 import { withTenantContext } from '@/lib/db';
+import { requireTenantPermission, isFamilyRole, getFamilyResidentLinks } from '@/lib/rbac';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authz = await requireTenantPermission(req, ['medical:record:read', 'family:resident:view_own']);
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
+
+    // Strict Policy: Platform Owner accounts must never access clinical/medical records
+    if (session.isPlatformAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Medical records are strictly restricted from Platform Owner accounts' },
+        { status: 403 }
+      );
     }
 
+    const orgId = session.activeOrgId!;
     const { searchParams } = new URL(req.url);
     const residentId = searchParams.get('residentId');
 
-    const records = await withTenantContext(session.activeOrgId, async (client) => {
+    const familyMode = isFamilyRole(session.roleSlug);
+    let allowedResidentIds: string[] | null = null;
+
+    if (familyMode) {
+      const links = await getFamilyResidentLinks(orgId, session.userId);
+      allowedResidentIds = links.filter((l) => l.canViewRecords).map((l) => l.residentId);
+
+      if (residentId && !allowedResidentIds.includes(residentId)) {
+        return NextResponse.json(
+          { error: 'Forbidden: You are not authorized to view medical records for this resident' },
+          { status: 403 }
+        );
+      }
+
+      if (allowedResidentIds.length === 0) {
+        return NextResponse.json({ records: [] });
+      }
+    }
+
+    const records = await withTenantContext(orgId, async (client) => {
       let query = `
         SELECT 
           m.id,
@@ -30,12 +56,22 @@ export async function GET(req: NextRequest) {
         FROM medical_records m
         JOIN residents r ON m.resident_id = r.id
         LEFT JOIN users u ON m.doctor_id = u.id
+        WHERE 1=1
       `;
       const params: any[] = [];
       if (residentId) {
         params.push(residentId);
-        query += ` WHERE m.resident_id = $1`;
+        query += ` AND m.resident_id = $${params.length}`;
       }
+      if (allowedResidentIds) {
+        params.push(allowedResidentIds);
+        query += ` AND m.resident_id = ANY($${params.length}::uuid[])`;
+      }
+      if (session.branchId && session.roleSlug !== 'admin') {
+        params.push(session.branchId);
+        query += ` AND (r.branch_id = $${params.length} OR r.branch_id IS NULL)`;
+      }
+
       query += ` ORDER BY m.record_date DESC, m.created_at DESC;`;
 
       const res = await client.query(query, params);
@@ -50,15 +86,15 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.cookies.get('eldercare_session')?.value;
-    const session = token ? await verifyToken(token) : null;
-    if (!session || !session.activeOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const authz = await requireTenantPermission(req, 'medical:record:write');
+    if (!authz.authorized) return authz.errorResponse;
+    const { session } = authz;
 
-    // Role check: Only Doctor, Nurse, or Admin can write medical records
-    if (!['doctor', 'nurse', 'admin'].includes(session.roleSlug || '') && !session.isPlatformAdmin) {
-      return NextResponse.json({ error: 'Forbidden: Medical record creation restricted to clinicians' }, { status: 403 });
+    if (session.isPlatformAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Platform Owner accounts cannot author medical records' },
+        { status: 403 }
+      );
     }
 
     const body = await req.json();
@@ -68,21 +104,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Resident ID and diagnosis are required' }, { status: 400 });
     }
 
-    const newRecord = await withTenantContext(session.activeOrgId, async (client) => {
-      const res = await client.query(`
+    const newRecord = await withTenantContext(session.activeOrgId!, async (client) => {
+      const res = await client.query(
+        `
         INSERT INTO medical_records (
           organization_id, resident_id, doctor_id, diagnosis, clinical_notes, follow_up_date, record_type
         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *;
-      `, [
-        session.activeOrgId,
-        residentId,
-        session.userId,
-        diagnosis.trim(),
-        clinicalNotes || null,
-        followUpDate || null,
-        recordType,
-      ]);
+      `,
+        [
+          session.activeOrgId,
+          residentId,
+          session.userId,
+          diagnosis.trim(),
+          clinicalNotes || null,
+          followUpDate || null,
+          recordType,
+        ]
+      );
       return res.rows[0];
     });
 
