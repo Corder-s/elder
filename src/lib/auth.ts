@@ -52,10 +52,16 @@ export function extractTokenFromRequest(req: NextRequest): string | null {
   return cookieToken || headerToken || null;
 }
 
+function shouldUseSecureCookie(): boolean {
+  if (process.env.NODE_ENV !== 'production') return false;
+  const appUrl = process.env.APP_URL || '';
+  return appUrl.startsWith('https://');
+}
+
 export function setSessionCookie(response: NextResponse, token: string): void {
   response.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: shouldUseSecureCookie(),
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_MAX_AGE_SECONDS,
@@ -65,7 +71,7 @@ export function setSessionCookie(response: NextResponse, token: string): void {
 export function clearSessionCookie(response: NextResponse): void {
   response.cookies.set(SESSION_COOKIE_NAME, '', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: shouldUseSecureCookie(),
     sameSite: 'lax',
     path: '/',
     expires: new Date(0),

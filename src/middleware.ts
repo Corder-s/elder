@@ -12,7 +12,7 @@ const PUBLIC_ROUTES = [
   '/welcome',
   '/login',
   '/register',
-  '/register-ngo',
+  '/accept-invitation',
   '/forgot-password',
   '/reset-password',
   '/email-verification',
@@ -25,7 +25,7 @@ const PUBLIC_ROUTES = [
   '/api/auth/reset-password',
   '/api/auth/verify-email',
   '/api/auth/resend-verification',
-  '/api/tenants/register',
+  '/api/invitations/accept',
   '/api/plans',
   '/api/webhooks/razorpay',
 ];
@@ -92,8 +92,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (!session.activeOrgId && !session.isPlatformAdmin && pathname !== '/role-selection') {
-    return NextResponse.redirect(new URL('/register-ngo', req.url));
+  if (
+    !session.activeOrgId &&
+    !session.isPlatformAdmin &&
+    pathname !== '/pending-approval' &&
+    pathname !== '/role-selection' &&
+    pathname !== '/accept-invitation'
+  ) {
+    return NextResponse.redirect(new URL('/pending-approval', req.url));
   }
 
   const reqHeaders = new Headers(req.headers);

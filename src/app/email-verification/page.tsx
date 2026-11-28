@@ -67,7 +67,12 @@ function EmailVerificationContent() {
         setError(data.error || "Unable to resend verification email.");
         return;
       }
-      setInfoMessage(data.message || "Verification link dispatched if account is eligible.");
+      if (data.devVerificationToken) {
+        setToken(data.devVerificationToken);
+        setInfoMessage("SMTP is not configured on this server. Your verification token has been filled below — tap Verify Email Address.");
+      } else {
+        setInfoMessage(data.message || "Verification link dispatched if account is eligible.");
+      }
       setShowResend(false);
     } catch {
       setError("Network error while resending verification.");

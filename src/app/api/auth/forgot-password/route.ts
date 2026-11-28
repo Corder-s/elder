@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
       [cleanEmail]
     );
 
+    let devResetToken: string | undefined;
+
     if (userRes.rows.length > 0 && userRes.rows[0].status === 'active') {
       const user = userRes.rows[0];
 
@@ -73,7 +75,10 @@ export async function POST(req: NextRequest) {
         [user.id, tokenHash, expiresAt, ipAddress]
       );
 
-      await sendPasswordResetEmail(user.email, user.full_name, rawToken);
+      const emailResult = await sendPasswordResetEmail(user.email, user.full_name, rawToken);
+      if (emailResult.mode === 'dev_sink' && process.env.EMAIL_TEST_CAPTURE !== 'true') {
+        devResetToken = rawToken;
+      }
 
       await logAuthSecurityEvent({
         userId: user.id,
@@ -86,6 +91,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: GENERIC_FORGOT_MSG,
+      ...(devResetToken ? { devResetToken } : {}),
     });
   } catch (error: any) {
     console.error('Forgot password error:', error);

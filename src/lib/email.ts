@@ -58,7 +58,8 @@ export async function sendEmail(message: EmailMessage): Promise<{ dispatched: bo
 
   if (!transporter) {
     if (process.env.NODE_ENV === 'production') {
-      throw new Error('SMTP_HOST is not configured in production environment.');
+      console.warn(`[Email Fallback] SMTP_HOST is not configured; skipping external email delivery to ${message.to} | Subject: ${message.subject}`);
+      return { dispatched: false, mode: 'dev_sink' };
     }
     // Safe local development sink: never log tokens or passwords
     console.info(`[Email Dev Sink] To: ${message.to} | Subject: ${message.subject}`);

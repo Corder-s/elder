@@ -9,13 +9,10 @@ import {
   Lock,
   Eye,
   EyeOff,
-  Shield,
-  Sparkles,
 } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
-import { RoleType } from "@/types";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,7 +20,6 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [selectedRole, setSelectedRole] = useState<RoleType>("ngo_admin");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsVerification, setNeedsVerification] = useState(false);
@@ -49,9 +45,13 @@ export default function LoginPage() {
       }
       await refreshSession();
       if (data.user?.isPlatformAdmin) {
-        router.push(data.mfaRequired || data.mfaSetupRequired ? "/platform/mfa" : "/platform/dashboard");
+        router.replace(data.mfaRequired || data.mfaSetupRequired ? "/platform/mfa" : "/platform/overview");
+      } else if ((data.memberships || []).length > 1) {
+        router.replace("/role-selection");
+      } else if (!data.session?.activeOrgId) {
+        router.replace("/pending-approval");
       } else {
-        router.push("/");
+        router.replace("/");
       }
     } catch {
       setError("Unable to reach authentication server.");
@@ -99,31 +99,6 @@ export default function LoginPage() {
           <p className="text-xs text-[#686581] mt-1">
             Sign in to continue to ElderCare OS
           </p>
-        </div>
-
-        {/* Role Evaluation Selector */}
-        <div className="p-3 rounded-2xl bg-white/90 backdrop-blur-xs border border-[#E8E1F5] shadow-2xs">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-bold text-[#6D28D9] uppercase tracking-wider flex items-center gap-1">
-              <Shield className="h-3 w-3" />
-              <span>Simulate Role:</span>
-            </span>
-            <span className="text-[10px] text-[#686581]">8 Roles Available</span>
-          </div>
-          <select
-            className="w-full h-9 rounded-xl border border-[#E8E1F5] bg-[#FAF8FF] px-2.5 text-xs font-semibold text-[#17133A] focus:outline-none focus:ring-2 focus:ring-[#6D28D9]"
-            value={selectedRole}
-            onChange={(e) => setSelectedRole(e.target.value as RoleType)}
-          >
-            <option value="ngo_admin">Administrator (Sri Seva Old Age Home)</option>
-            <option value="super_admin">Super Admin (System Control)</option>
-            <option value="doctor">Doctor (Medical Care & Prescriptions)</option>
-            <option value="nurse">Caretaker / Nurse (Daily Care & Vitals)</option>
-            <option value="accountant">Accountant (Finance & Donations)</option>
-            <option value="staff">Staff (Assigned Activities)</option>
-            <option value="volunteer">Volunteer (Support Activities)</option>
-            <option value="family_guardian">Family Member (Resident Updates)</option>
-          </select>
         </div>
 
         {/* Form Inputs matching Reference Screen 2 */}

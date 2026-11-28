@@ -29,7 +29,10 @@ export async function POST(req: NextRequest) {
     console.error('Logout revocation error:', err);
   }
 
-  const response = NextResponse.json({ success: true, message: 'Logged out successfully' });
+  const response = NextResponse.json(
+    { success: true, message: 'Logged out successfully' },
+    { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, private' } }
+  );
   clearSessionCookie(response);
   return response;
 }

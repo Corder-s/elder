@@ -116,7 +116,12 @@ export async function DELETE(
 
     const deleted = await withTenantContext(session.activeOrgId!, async (client) => {
       const res = await client.query(
-        'DELETE FROM invitations WHERE id = $1 AND accepted_at IS NULL RETURNING id, email',
+        `
+        UPDATE invitations
+        SET revoked_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
+        RETURNING id, email
+        `,
         [id]
       );
       if (res.rows.length === 0) return null;

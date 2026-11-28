@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission } from '@/lib/rbac';
 import { logTenantAudit } from '@/lib/audit';
-import { generateSecureToken, getClientMetadata } from '@/lib/security';
+import { generateSecureToken, getClientMetadata, hashToken } from '@/lib/security';
 import { enforceStaffQuotaTx } from '@/lib/billing/quota-service';
+import { sendEmail } from '@/lib/email';
 
 export async function GET(req: NextRequest) {
   try {
@@ -37,11 +38,11 @@ export async function GET(req: NextRequest) {
 
       const invitesRes = await client.query(
         `
-        SELECT i.id, i.email, i.role_id, i.branch_id, i.expires_at, i.accepted_at, i.created_at,
+        SELECT i.id, i.email, i.invitee_name, i.role_id, i.branch_id, i.message, i.expires_at, i.accepted_at, i.revoked_at, i.created_at,
                r.name AS role_name, r.slug AS role_slug
         FROM invitations i
         JOIN roles r ON i.role_id = r.id
-        WHERE i.accepted_at IS NULL
+        WHERE i.accepted_at IS NULL AND i.revoked_at IS NULL
         ORDER BY i.created_at DESC
         `
       );
@@ -66,13 +67,15 @@ export async function POST(req: NextRequest) {
     if (!authz.authorized) return authz.errorResponse;
     const { session } = authz;
 
-    const { email, roleId, branchId } = await req.json();
+    const { name, email, roleId, branchId, message } = await req.json();
     if (!email || !roleId) {
       return NextResponse.json({ error: 'Email and roleId are required' }, { status: 400 });
     }
 
     const cleanEmail = String(email).toLowerCase().trim();
     const { ipAddress } = getClientMetadata(req);
+    const rawToken = generateSecureToken(24);
+    const tokenHash = hashToken(rawToken);
 
     const result = await withTenantContext(session.activeOrgId!, async (client) => {
       const quota = await enforceStaffQuotaTx(client, session.activeOrgId!);
@@ -81,7 +84,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Verify role belongs to this organization
-      const roleCheck = await client.query('SELECT id, slug FROM roles WHERE id = $1', [roleId]);
+      const roleCheck = await client.query('SELECT id, slug, name FROM roles WHERE id = $1', [roleId]);
       if (roleCheck.rows.length === 0) {
         return { status: 404, error: 'Role not found in this organization' };
       }
@@ -91,16 +94,29 @@ export async function POST(req: NextRequest) {
         if (brCheck.rows.length === 0) return { status: 404, error: 'Branch not found in this organization' };
       }
 
-      const rawToken = generateSecureToken(24);
+      const orgRes = await client.query('SELECT name FROM organizations WHERE id = $1', [session.activeOrgId]);
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
       const invRes = await client.query(
         `
-        INSERT INTO invitations (organization_id, email, role_id, branch_id, token, invited_by, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, email, role_id, branch_id, expires_at, created_at
+        INSERT INTO invitations (
+          organization_id, email, invitee_name, role_id, branch_id, token_hash,
+          invitation_type, message, invited_by, expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'member_invite', $7, $8, $9)
+        RETURNING id, email, invitee_name, role_id, branch_id, expires_at, created_at
         `,
-        [session.activeOrgId, cleanEmail, roleId, branchId || null, rawToken, session.userId, expiresAt]
+        [
+          session.activeOrgId,
+          cleanEmail,
+          name ? String(name).trim() : null,
+          roleId,
+          branchId || null,
+          tokenHash,
+          message ? String(message).trim() : null,
+          session.userId,
+          expiresAt,
+        ]
       );
 
       await logTenantAudit(client, {
@@ -113,11 +129,35 @@ export async function POST(req: NextRequest) {
         ipAddress,
       });
 
-      return { status: 201, invitation: invRes.rows[0] };
+      return {
+        status: 201,
+        invitation: invRes.rows[0],
+        orgName: orgRes.rows[0]?.name || 'ElderCare OS Organization',
+        roleName: roleCheck.rows[0].name,
+      };
     });
 
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: result.status });
-    return NextResponse.json({ success: true, invitation: result.invitation }, { status: 201 });
+
+    const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+    const inviteUrl = `${baseUrl}/accept-invitation?token=${encodeURIComponent(rawToken)}`;
+    const emailResult = await sendEmail({
+      to: cleanEmail,
+      subject: `Invitation to join ${result.orgName} on ElderCare OS`,
+      text: `You have been invited to join ${result.orgName} as ${result.roleName}.\nAccept here: ${inviteUrl}\nInvitation Token: ${rawToken}`,
+      html: `<p>You have been invited to join <strong>${result.orgName}</strong> as <strong>${result.roleName}</strong>.</p><p><a href="${inviteUrl}">Accept Invitation</a></p>`,
+    });
+
+    return NextResponse.json(
+      {
+        success: true,
+        invitation: result.invitation,
+        ...(emailResult.mode === 'dev_sink' && process.env.EMAIL_TEST_CAPTURE !== 'true'
+          ? { devInvitationToken: rawToken }
+          : {}),
+      },
+      { status: 201 }
+    );
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

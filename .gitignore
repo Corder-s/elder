@@ -24,6 +24,14 @@ backups/
 *.backup
 *.dump
 
+# android build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+
+
 
 # typescript
 *.tsbuildinfo

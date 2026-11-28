@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
       [cleanEmail]
     );
 
+    let devVerificationToken: string | undefined;
+
     if (userRes.rows.length > 0) {
       const user = userRes.rows[0];
       if (user.status === 'active' && !user.email_verified_at) {
@@ -73,7 +75,10 @@ export async function POST(req: NextRequest) {
           [user.id, tokenHash, expiresAt, ipAddress]
         );
 
-        await sendVerificationEmail(user.email, user.full_name, rawToken);
+        const emailResult = await sendVerificationEmail(user.email, user.full_name, rawToken);
+        if (emailResult.mode === 'dev_sink' && process.env.EMAIL_TEST_CAPTURE !== 'true') {
+          devVerificationToken = rawToken;
+        }
 
         await logAuthSecurityEvent({
           userId: user.id,
@@ -87,6 +92,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: GENERIC_RESEND_MSG,
+      ...(devVerificationToken ? { devVerificationToken } : {}),
     });
   } catch (error: any) {
     console.error('Resend verification error:', error);

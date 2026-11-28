@@ -12,10 +12,12 @@ export default function ForgotPasswordPage() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [devResetToken, setDevResetToken] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setDevResetToken(null);
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/forgot-password", {
@@ -27,6 +29,9 @@ export default function ForgotPasswordPage() {
       if (!res.ok) {
         setError(data.error || "Unable to send reset instructions.");
         return;
+      }
+      if (data.devResetToken) {
+        setDevResetToken(data.devResetToken);
       }
       setIsSubmitted(true);
     } catch {
@@ -78,7 +83,19 @@ export default function ForgotPasswordPage() {
             </div>
 
             <div className="pt-2 space-y-2">
-              <Link href="/reset-password">
+              {devResetToken && (
+                <div className="p-3 rounded-2xl bg-[#F3E8FF] border border-[#DDD6FE] text-xs text-[#4C1D95] space-y-2 mb-2">
+                  <p className="font-semibold">
+                    SMTP email is not configured on this local server. Reset your password directly:
+                  </p>
+                  <Link href={`/reset-password?token=${encodeURIComponent(devResetToken)}`} className="block">
+                    <Button className="w-full bg-[#6D28D9] text-white h-10 rounded-2xl font-bold text-xs">
+                      Reset Password Now →
+                    </Button>
+                  </Link>
+                </div>
+              )}
+              <Link href={devResetToken ? `/reset-password?token=${encodeURIComponent(devResetToken)}` : "/reset-password"}>
                 <Button className="w-full bg-gradient-to-r from-[#6D28D9] to-[#8B5CF6] hover:opacity-95 text-white h-11 rounded-2xl font-bold flex items-center justify-center gap-2">
                   <span>Enter Reset Token</span>
                   <ArrowRight className="h-4 w-4" />
