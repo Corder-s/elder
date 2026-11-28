@@ -223,18 +223,26 @@ export default function DocumentsPage() {
               <p className="text-[11px] text-[#686581]">Private encrypted tenant storage</p>
             </div>
           </div>
-          <Button
-            size="sm"
-            onClick={() => {
-              setUploadError(null);
-              setUploadProgress(0);
-              setIsUploadOpen(true);
-            }}
-            className="bg-gradient-to-r from-[#6D28D9] to-[#8B5CF6] text-white text-xs h-9 rounded-xl font-bold px-3 shadow-soft flex items-center gap-1.5"
-          >
-            <UploadCloud className="h-4 w-4" />
-            <span>Upload</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/documents/intelligence"
+              className="px-3 py-2 rounded-xl bg-[#F3E8FF] text-[#6D28D9] text-xs font-bold"
+            >
+              AI OCR
+            </Link>
+            <Button
+              size="sm"
+              onClick={() => {
+                setUploadError(null);
+                setUploadProgress(0);
+                setIsUploadOpen(true);
+              }}
+              className="bg-gradient-to-r from-[#6D28D9] to-[#8B5CF6] text-white text-xs h-9 rounded-xl font-bold px-3 shadow-soft flex items-center gap-1.5"
+            >
+              <UploadCloud className="h-4 w-4" />
+              <span>Upload</span>
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-2">
