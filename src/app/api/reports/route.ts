@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission, isFamilyRole } from '@/lib/rbac';
+import { checkFeatureEntitlement } from '@/lib/billing/entitlements';
 
 export async function GET(req: NextRequest) {
   try {
@@ -105,6 +106,8 @@ export async function GET(req: NextRequest) {
         };
       }
 
+      const advEntitlement = await checkFeatureEntitlement(session.activeOrgId!, 'advanced_reports');
+
       return {
         residents: {
           total: parseInt(residentsRes.rows[0].total, 10),
@@ -132,6 +135,11 @@ export async function GET(req: NextRequest) {
         },
         medical,
         finance,
+        advancedAnalytics: {
+          enabled: advEntitlement.allowed,
+          reason: advEntitlement.reason,
+          planRequired: advEntitlement.allowed ? null : 'Professional or Enterprise',
+        },
       };
     });
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission, isFamilyRole, getFamilyResidentLinks } from '@/lib/rbac';
+import { enforceResidentQuotaTx } from '@/lib/billing/quota-service';
 
 export async function GET(req: NextRequest) {
   try {
@@ -103,48 +104,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Full name and gender are required' }, { status: 400 });
     }
 
-    // 1. Quota Enforcement inside Tenant RLS Context
-    const quotaError = await withTenantContext(orgId, async (client) => {
-      const subRes = await client.query(`
-        SELECT sp.resident_limit, ts.status AS sub_status
-        FROM tenant_subscriptions ts
-        JOIN subscription_plans sp ON ts.plan_id = sp.id
-        WHERE ts.organization_id = $1;
-      `, [orgId]);
-
-      if (subRes.rows.length > 0) {
-        const { resident_limit, sub_status } = subRes.rows[0];
-        if (sub_status === 'suspended') {
-          return {
-            error: 'Subscription suspended. Read-only healthcare safety mode is active. Cannot admit new residents.',
-          };
-        }
-
-        const countRes = await client.query(`
-          SELECT count(*) as count 
-          FROM residents 
-          WHERE organization_id = $1 AND is_deleted = false AND resident_status IN ('active', 'hospitalized', 'temporary_leave');
-        `, [orgId]);
-
-        const currentCount = parseInt(countRes.rows[0].count, 10);
-        if (currentCount >= resident_limit) {
-          return {
-            error: `Resident quota reached (${currentCount}/${resident_limit}). Please upgrade your subscription plan to admit more residents.`,
-            quotaExceeded: true,
-            currentCount,
-            limit: resident_limit,
-          };
-        }
+    // 1. Transactional Quota Enforcement + Insert Resident within Tenant Transaction
+    const txResult = await withTenantContext(orgId, async (client) => {
+      const quota = await enforceResidentQuotaTx(client, orgId);
+      if (!quota.allowed) {
+        return {
+          quotaError: {
+            error: quota.errorMessage,
+            quotaExceeded: quota.warningLevel === 'blocked_100',
+            currentCount: quota.currentCount,
+            limit: quota.limit,
+          },
+        };
       }
-      return null;
-    });
 
-    if (quotaError) {
-      return NextResponse.json(quotaError, { status: 403 });
-    }
-
-    // 2. Insert Resident within Tenant Transaction
-    const newResident = await withTenantContext(orgId, async (client) => {
       // Auto-generate resident number
       const numRes = await client.query(`
         SELECT COALESCE(MAX(SUBSTRING(resident_number FROM '[0-9]+')::integer), 0) + 1 AS next_num
@@ -187,10 +160,14 @@ export async function POST(req: NextRequest) {
         WHERE organization_id = $1 AND metric_name = 'residents_count';
       `, [session.activeOrgId]);
 
-      return res.rows[0];
+      return { resident: res.rows[0] };
     });
 
-    return NextResponse.json({ success: true, resident: newResident }, { status: 201 });
+    if ('quotaError' in txResult && txResult.quotaError) {
+      return NextResponse.json(txResult.quotaError, { status: 403 });
+    }
+
+    return NextResponse.json({ success: true, resident: txResult.resident }, { status: 201 });
   } catch (error: any) {
     console.error('Create resident error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

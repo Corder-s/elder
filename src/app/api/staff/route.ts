@@ -3,6 +3,7 @@ import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission } from '@/lib/rbac';
 import { logTenantAudit } from '@/lib/audit';
 import { generateSecureToken, getClientMetadata } from '@/lib/security';
+import { enforceStaffQuotaTx } from '@/lib/billing/quota-service';
 
 export async function GET(req: NextRequest) {
   try {
@@ -74,6 +75,11 @@ export async function POST(req: NextRequest) {
     const { ipAddress } = getClientMetadata(req);
 
     const result = await withTenantContext(session.activeOrgId!, async (client) => {
+      const quota = await enforceStaffQuotaTx(client, session.activeOrgId!);
+      if (!quota.allowed) {
+        return { status: 403, error: quota.errorMessage || 'Staff quota limit reached' };
+      }
+
       // Verify role belongs to this organization
       const roleCheck = await client.query('SELECT id, slug FROM roles WHERE id = $1', [roleId]);
       if (roleCheck.rows.length === 0) {

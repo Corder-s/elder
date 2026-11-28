@@ -27,6 +27,7 @@ const PUBLIC_ROUTES = [
   '/api/auth/resend-verification',
   '/api/tenants/register',
   '/api/plans',
+  '/api/webhooks/razorpay',
 ];
 
 export async function middleware(req: NextRequest) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission, isFamilyRole, getFamilyResidentLinks } from '@/lib/rbac';
+import { enforceStorageQuotaTx } from '@/lib/billing/quota-service';
 
 export async function GET(req: NextRequest) {
   try {
@@ -93,7 +94,14 @@ export async function POST(req: NextRequest) {
     const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const s3Key = `tenants/${safeOrgId}/documents/${timestamp}_${cleanFileName}`;
 
-    const newDoc = await withTenantContext(safeOrgId, async (client) => {
+    const safeSizeBytes = Math.max(0, Number(fileSizeBytes || 1024));
+
+    const result = await withTenantContext(safeOrgId, async (client) => {
+      const quota = await enforceStorageQuotaTx(client, safeOrgId, safeSizeBytes);
+      if (!quota.allowed) {
+        return { quotaError: quota };
+      }
+
       const res = await client.query(`
         INSERT INTO documents (
           organization_id, resident_id, uploaded_by, title, document_type,
@@ -107,7 +115,7 @@ export async function POST(req: NextRequest) {
         title.trim(),
         documentType || 'general',
         cleanFileName,
-        fileSizeBytes || 1024,
+        safeSizeBytes,
         mimeType,
         s3Key,
         isConfidential,
@@ -118,10 +126,24 @@ export async function POST(req: NextRequest) {
         UPDATE usage_records
         SET metric_value = metric_value + $1
         WHERE organization_id = $2 AND metric_name = 'storage_bytes';
-      `, [fileSizeBytes || 1024, safeOrgId]);
+      `, [safeSizeBytes, safeOrgId]);
 
-      return res.rows[0];
+      return { document: res.rows[0] };
     });
+
+    if ('quotaError' in result && result.quotaError) {
+      return NextResponse.json(
+        {
+          error: result.quotaError.errorMessage,
+          quotaExceeded: result.quotaError.warningLevel === 'blocked_100',
+          currentCount: result.quotaError.currentCount,
+          limit: result.quotaError.limit,
+        },
+        { status: 403 }
+      );
+    }
+
+    const newDoc = result.document;
 
     return NextResponse.json({ success: true, document: newDoc }, { status: 201 });
   } catch (error: any) {

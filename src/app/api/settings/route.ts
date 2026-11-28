@@ -3,6 +3,7 @@ import { withTenantContext, getDbPool } from '@/lib/db';
 import { requireTenantPermission } from '@/lib/rbac';
 import { logTenantAudit } from '@/lib/audit';
 import { getClientMetadata } from '@/lib/security';
+import { enforceBranchQuotaTx } from '@/lib/billing/quota-service';
 
 export async function GET(req: NextRequest) {
   try {
@@ -70,7 +71,11 @@ export async function PATCH(req: NextRequest) {
       if (!name || !code) {
         return NextResponse.json({ error: 'Branch name and code are required' }, { status: 400 });
       }
-      const branch = await withTenantContext(orgId, async (client) => {
+      const branchResult = await withTenantContext(orgId, async (client) => {
+        const quota = await enforceBranchQuotaTx(client, orgId);
+        if (!quota.allowed) {
+          return { error: quota.errorMessage || 'Branch quota limit reached' };
+        }
         const res = await client.query(
           `
           INSERT INTO branches (organization_id, name, code, phone, address, is_main_branch, status)
@@ -88,9 +93,12 @@ export async function PATCH(req: NextRequest) {
           newData: { name, code },
           ipAddress,
         });
-        return res.rows[0];
+        return { branch: res.rows[0] };
       });
-      return NextResponse.json({ success: true, branch }, { status: 201 });
+      if ('error' in branchResult) {
+        return NextResponse.json({ error: branchResult.error }, { status: 403 });
+      }
+      return NextResponse.json({ success: true, branch: branchResult.branch }, { status: 201 });
     }
 
     // Update NGO profile fields (never allows modifying status, slug, or platform plans)

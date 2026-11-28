@@ -180,6 +180,7 @@ export async function withPlatformContext<T>(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query("SELECT set_config('app.is_platform_admin', 'true', true)");
     const result = await maybeOperation(client);
     await client.query('COMMIT');
     return result;

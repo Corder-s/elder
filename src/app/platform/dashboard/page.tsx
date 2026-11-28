@@ -71,6 +71,27 @@ export default function PlatformDashboardPage() {
           <Link href="/platform/organizations" className="text-purple-300 hover:text-white transition-colors">
             Organizations
           </Link>
+          <Link href="/platform/subscriptions" className="text-purple-300 hover:text-white transition-colors">
+            Subscriptions
+          </Link>
+          <Link href="/platform/plans" className="text-purple-300 hover:text-white transition-colors">
+            Plans
+          </Link>
+          <Link href="/platform/payments" className="text-purple-300 hover:text-white transition-colors">
+            Payments
+          </Link>
+          <Link href="/platform/invoices" className="text-purple-300 hover:text-white transition-colors">
+            Invoices
+          </Link>
+          <Link href="/platform/usage" className="text-purple-300 hover:text-white transition-colors">
+            Usage
+          </Link>
+          <Link href="/platform/audit-logs" className="text-purple-300 hover:text-white transition-colors">
+            Audit Logs
+          </Link>
+          <Link href="/platform/settings" className="text-purple-300 hover:text-white transition-colors">
+            Settings
+          </Link>
           <button
             onClick={fetchMetrics}
             className="p-1.5 rounded-lg hover:bg-purple-900/40 text-purple-300"

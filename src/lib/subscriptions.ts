@@ -1,12 +1,19 @@
 /**
- * ElderCare OS — Centralized Subscription & Quota Enforcement Engine
- * Implements Healthcare Safety Protocol, resource limits, and soft warning thresholds.
+ * ElderCare OS — Centralized Subscription & Quota Enforcement Facade
+ * Delegates to `src/lib/billing/` to avoid duplicate subscription systems.
  */
 
 import { getDbPool } from './db';
+import {
+  getOrganizationUsageSnapshot,
+  QuotaCheckResult,
+} from './billing/quota-service';
+import { evaluateHealthcareSafetyPolicy, LifecycleStatus } from './billing/entitlements';
+
+export type { QuotaCheckResult };
 
 export interface SubscriptionStatusInfo {
-  status: 'trial' | 'active' | 'past_due' | 'grace_period' | 'suspended' | 'cancelled';
+  status: LifecycleStatus;
   planName: string;
   planSlug: string;
   residentLimit: number;
@@ -19,39 +26,21 @@ export interface SubscriptionStatusInfo {
   currentPeriodEnd: string;
 }
 
-export interface QuotaCheckResult {
-  allowed: boolean;
-  currentCount: number;
-  limit: number;
-  utilizationPercentage: number;
-  warningLevel: 'none' | 'warning_80' | 'critical_95' | 'blocked_100';
-  errorMessage?: string;
-}
-
-/**
- * Fetch detailed subscription and quota limits for a tenant.
- */
 export async function getTenantSubscription(organizationId: string): Promise<SubscriptionStatusInfo> {
   const pool = getDbPool();
-  const query = `
-    SELECT 
-      ts.status,
-      ts.trial_end,
-      ts.current_period_end,
-      sp.name AS plan_name,
-      sp.slug AS plan_slug,
-      sp.resident_limit,
-      sp.staff_limit,
-      sp.branch_limit,
-      sp.storage_limit_mb
+  const res = await pool.query(
+    `
+    SELECT ts.status, ts.trial_end, ts.current_period_end,
+           sp.name AS plan_name, sp.slug AS plan_slug,
+           sp.resident_limit, sp.staff_limit, sp.branch_limit, sp.storage_limit_mb
     FROM tenant_subscriptions ts
     JOIN subscription_plans sp ON ts.plan_id = sp.id
-    WHERE ts.organization_id = $1;
-  `;
-  const res = await pool.query(query, [organizationId]);
+    WHERE ts.organization_id = $1
+    `,
+    [organizationId]
+  );
 
   if (res.rows.length === 0) {
-    // Default safe fallback to Starter trial
     return {
       status: 'trial',
       planName: 'Starter',
@@ -68,9 +57,7 @@ export async function getTenantSubscription(organizationId: string): Promise<Sub
   }
 
   const row = res.rows[0];
-  const isReadOnlySafetyMode = row.status === 'suspended';
-  const isInGracePeriod = row.status === 'grace_period';
-
+  const policy = evaluateHealthcareSafetyPolicy(row.status);
   return {
     status: row.status,
     planName: row.plan_name,
@@ -79,62 +66,14 @@ export async function getTenantSubscription(organizationId: string): Promise<Sub
     staffLimit: row.staff_limit,
     branchLimit: row.branch_limit,
     storageLimitMb: row.storage_limit_mb,
-    isReadOnlySafetyMode,
-    isInGracePeriod,
+    isReadOnlySafetyMode: policy.isReadOnlySafetyMode,
+    isInGracePeriod: row.status === 'grace_period',
     trialEndsAt: row.trial_end,
     currentPeriodEnd: row.current_period_end,
   };
 }
 
-/**
- * Enforce resident quota prior to admission.
- */
 export async function checkResidentQuota(organizationId: string): Promise<QuotaCheckResult> {
-  const sub = await getTenantSubscription(organizationId);
-
-  // Healthcare Safety Mode Check
-  if (sub.isReadOnlySafetyMode) {
-    return {
-      allowed: false,
-      currentCount: 0,
-      limit: sub.residentLimit,
-      utilizationPercentage: 100,
-      warningLevel: 'blocked_100',
-      errorMessage: 'Subscription is suspended. Read-only healthcare safety mode is active. Cannot admit new residents.',
-    };
-  }
-
-  const pool = getDbPool();
-  const res = await pool.query(`
-    SELECT count(*) AS count
-    FROM residents
-    WHERE organization_id = $1 AND is_deleted = false AND resident_status IN ('active', 'hospitalized', 'temporary_leave');
-  `, [organizationId]);
-
-  const currentCount = parseInt(res.rows[0].count, 10);
-  const limit = sub.residentLimit;
-  const pct = Math.round((currentCount / limit) * 100);
-
-  let warningLevel: QuotaCheckResult['warningLevel'] = 'none';
-  if (pct >= 100) {
-    warningLevel = 'blocked_100';
-  } else if (pct >= 95) {
-    warningLevel = 'critical_95';
-  } else if (pct >= 80) {
-    warningLevel = 'warning_80';
-  }
-
-  const allowed = currentCount < limit;
-  const errorMessage = !allowed
-    ? `Resident quota limit reached (${currentCount}/${limit}). Please upgrade your subscription.`
-    : undefined;
-
-  return {
-    allowed,
-    currentCount,
-    limit,
-    utilizationPercentage: pct,
-    warningLevel,
-    errorMessage,
-  };
+  const snapshot = await getOrganizationUsageSnapshot(organizationId);
+  return snapshot.residents;
 }

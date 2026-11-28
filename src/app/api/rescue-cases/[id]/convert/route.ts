@@ -3,6 +3,7 @@ import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission } from '@/lib/rbac';
 import { logTenantAudit } from '@/lib/audit';
 import { getClientMetadata } from '@/lib/security';
+import { enforceResidentQuotaTx } from '@/lib/billing/quota-service';
 
 export async function POST(
   req: NextRequest,
@@ -40,27 +41,9 @@ export async function POST(
         return { status: 409, error: 'Rescue case has already been converted to a resident admission' };
       }
 
-      // Check subscription resident quota
-      const subRes = await client.query(
-        `
-        SELECT sp.resident_limit, ts.status AS sub_status
-        FROM tenant_subscriptions ts
-        JOIN subscription_plans sp ON ts.plan_id = sp.id
-        WHERE ts.organization_id = $1
-        `,
-        [session.activeOrgId]
-      );
-      if (subRes.rows.length > 0) {
-        const { resident_limit, sub_status } = subRes.rows[0];
-        if (sub_status === 'suspended') {
-          return { status: 403, error: 'Subscription suspended. Cannot admit new residents.' };
-        }
-        const countRes = await client.query(
-          `SELECT count(*) AS cnt FROM residents WHERE is_deleted = false AND resident_status IN ('active', 'hospitalized', 'temporary_leave')`
-        );
-        if (parseInt(countRes.rows[0].cnt, 10) >= resident_limit) {
-          return { status: 403, error: `Resident quota reached (${resident_limit}). Upgrade plan to admit.` };
-        }
+      const quota = await enforceResidentQuotaTx(client, session.activeOrgId!);
+      if (!quota.allowed) {
+        return { status: 403, error: quota.errorMessage || 'Resident quota exceeded' };
       }
 
       const resNumQuery = await client.query(

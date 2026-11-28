@@ -3,6 +3,7 @@ import { withTenantContext } from '@/lib/db';
 import { requireTenantPermission } from '@/lib/rbac';
 import { logTenantAudit } from '@/lib/audit';
 import { getClientMetadata } from '@/lib/security';
+import { enforceStaffQuotaTx } from '@/lib/billing/quota-service';
 
 export async function PATCH(
   req: NextRequest,
@@ -40,6 +41,13 @@ export async function PATCH(
       }
 
       const member = existing.rows[0];
+
+      if (status === 'active' && member.status !== 'active') {
+        const quota = await enforceStaffQuotaTx(client, session.activeOrgId!);
+        if (!quota.allowed) {
+          return { status: 403, error: quota.errorMessage || 'Staff quota limit reached' };
+        }
+      }
 
       // Prevent users from escalating their own role or deactivating themselves
       if (member.user_id === session.userId && (roleId || status === 'suspended' || status === 'revoked')) {
