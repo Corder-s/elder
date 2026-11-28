@@ -1,132 +1,105 @@
 "use client";
 
-import React, { useState } from "react";
-import {
-  BarChart3,
-  Users,
-  ClipboardCheck,
-  Stethoscope,
-  Ambulance,
-  UserPlus,
-  IndianRupee,
-  Receipt,
-  FileCheck,
-  Building2,
-  ChevronRight,
-  FileDown,
-  Printer,
-} from "lucide-react";
+import React, { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
+import { BarChart3, ArrowLeft, AlertCircle, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
-import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/modal";
-
-interface ReportItem {
-  id: string;
-  title: string;
-  icon: React.ElementType;
-  description: string;
-}
-
-const REPORTS_LIST: ReportItem[] = [
-  { id: "1", title: "Resident Report", icon: Users, description: "Active residents, bed occupancy, and profile data." },
-  { id: "2", title: "Attendance Report", icon: ClipboardCheck, description: "Daily headcount, medical leave, and outside movement logs." },
-  { id: "3", title: "Medical Report", icon: Stethoscope, description: "Doctor visits, vital observation trends, and prescription audits." },
-  { id: "4", title: "Rescue Report", icon: Ambulance, description: "Intake cases, GPS locations, police logs, and reunifications." },
-  { id: "5", title: "Visitor Report", icon: UserPlus, description: "Gate check-in timestamps, family visits, and donor meetings." },
-  { id: "6", title: "Donation Report", icon: IndianRupee, description: "Issued 80G tax receipts, UPI transactions, and donor history." },
-  { id: "7", title: "Expense Report", icon: Receipt, description: "Ashram operational expenditure, groceries, and medical supplies." },
-  { id: "8", title: "Government Compliance", icon: FileCheck, description: "NOCs, fire safety, elderly welfare audits, and certificates." },
-  { id: "9", title: "Annual NGO Report", icon: Building2, description: "Consolidated annual operational and financial transparency review." },
-];
+import { Badge } from "@/components/ui/badge";
 
 export default function ReportsPage() {
-  const [selectedReport, setSelectedReport] = useState<ReportItem | null>(null);
+  const [report, setReport] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleDownload = (format: string) => {
-    alert(`Generating ${format.toUpperCase()} report for: ${selectedReport?.title}`);
-    setSelectedReport(null);
-  };
+  const loadReport = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/reports");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load analytics");
+      setReport(data.report);
+    } catch (err: any) {
+      setError(err.message);
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
 
   return (
     <AppShell>
       <div className="space-y-4">
-        {/* Header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-black text-[#17133A]">Reports</h2>
-          <span className="text-xs font-bold text-[#6D28D9] bg-[#F3E8FF] px-2.5 py-1 rounded-full">
-            9 Formats
-          </span>
-        </div>
-
-        {/* Reports List matching Reference Image 1 Screen 7 */}
-        <div className="space-y-2.5">
-          {REPORTS_LIST.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div
-                key={item.id}
-                onClick={() => setSelectedReport(item)}
-                className="p-3.5 rounded-2xl bg-white border border-[#E8E1F5] hover:border-[#6D28D9]/40 shadow-card flex items-center justify-between cursor-pointer transition-all active:scale-[0.99]"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="h-10 w-10 rounded-2xl bg-[#F3E8FF] text-[#6D28D9] flex items-center justify-center shrink-0">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-[#17133A]">
-                      {item.title}
-                    </h4>
-                    <p className="text-[11px] text-[#686581] mt-0.5 line-clamp-1">
-                      {item.description}
-                    </p>
-                  </div>
-                </div>
-
-                <ChevronRight className="h-4 w-4 text-[#686581]/70 shrink-0" />
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Report Export Dialog */}
-      {selectedReport && (
-        <Modal
-          isOpen={!!selectedReport}
-          onClose={() => setSelectedReport(null)}
-          title={`Generate ${selectedReport.title}`}
-          description={selectedReport.description}
-          className="max-w-xs text-center"
-        >
-          <div className="space-y-3 pt-2 text-xs">
-            <Button
-              onClick={() => handleDownload("pdf")}
-              className="w-full rounded-2xl flex items-center justify-center gap-2 font-bold"
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-white border border-[#E8E1F5] text-[#17133A] shadow-2xs"
             >
-              <FileDown className="h-4 w-4" />
-              <span>Download Formatted PDF</span>
-            </Button>
-
-            <Button
-              onClick={() => handleDownload("excel")}
-              variant="outline"
-              className="w-full rounded-2xl flex items-center justify-center gap-2 font-bold"
-            >
-              <FileDown className="h-4 w-4" />
-              <span>Export Excel Spreadsheet</span>
-            </Button>
-
-            <Button
-              onClick={() => handleDownload("print")}
-              variant="secondary"
-              className="w-full rounded-2xl flex items-center justify-center gap-2 font-bold"
-            >
-              <Printer className="h-4 w-4" />
-              <span>Print Official Copy</span>
-            </Button>
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <div>
+              <h1 className="text-lg font-black text-[#17133A]">Reports &amp; Analytics</h1>
+              <p className="text-[11px] text-[#686581]">Live PostgreSQL operational metrics</p>
+            </div>
           </div>
-        </Modal>
-      )}
+          <Badge variant="purple">Live SQL</Badge>
+        </div>
+
+        {error && (
+          <div className="p-3.5 rounded-2xl bg-[#FFE4E6] border border-[#FDA4AF] text-[#E11D48] text-xs flex items-center justify-between">
+            <span className="flex items-center gap-2"><AlertCircle className="h-4 w-4" />{error}</span>
+            <button onClick={loadReport} className="font-bold underline flex items-center gap-1"><RefreshCw className="h-3 w-3" />Retry</button>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="p-8 text-center text-xs text-[#686581]">Aggregating live organization metrics...</div>
+        ) : !report ? null : (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card">
+              <span className="text-[10px] font-bold text-[#686581] uppercase">Active Residents</span>
+              <p className="text-2xl font-black text-[#6D28D9] mt-1">{report.residents?.active ?? 0}</p>
+              <span className="text-[11px] text-[#686581]">Total: {report.residents?.total ?? 0}</span>
+            </div>
+            <div className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card">
+              <span className="text-[10px] font-bold text-[#686581] uppercase">Bed Occupancy</span>
+              <p className="text-2xl font-black text-[#17133A] mt-1">
+                {report.facilities?.occupiedBeds ?? 0}/{report.facilities?.totalBeds ?? 0}
+              </p>
+              <span className="text-[11px] text-[#686581]">Available: {report.facilities?.availableBeds ?? 0}</span>
+            </div>
+            <div className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card">
+              <span className="text-[10px] font-bold text-[#686581] uppercase">Rescue Cases</span>
+              <p className="text-2xl font-black text-[#EA580C] mt-1">{report.rescue?.open ?? 0}</p>
+              <span className="text-[11px] text-[#686581]">Resolved: {report.rescue?.resolved ?? 0}</span>
+            </div>
+            <div className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card">
+              <span className="text-[10px] font-bold text-[#686581] uppercase">Active Staff</span>
+              <p className="text-2xl font-black text-[#16A34A] mt-1">{report.staff?.activeMembers ?? 0}</p>
+              <span className="text-[11px] text-[#686581]">Volunteers: {report.staff?.volunteers ?? 0}</span>
+            </div>
+            {report.finance && (
+              <div className="col-span-2 p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-[#686581] uppercase">Financial Summary</span>
+                  <p className="text-sm font-black text-[#17133A] mt-0.5">
+                    Donations: ₹{report.finance.totalDonations.toLocaleString("en-IN")}
+                  </p>
+                  <p className="text-xs text-[#686581]">
+                    Expenses: ₹{report.finance.totalExpenses.toLocaleString("en-IN")}
+                  </p>
+                </div>
+                <BarChart3 className="h-8 w-8 text-[#6D28D9]" />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </AppShell>
   );
 }

@@ -1,5 +1,6 @@
 // ElderCare OS - Multi-Tenant Data Service
-// Connects to tenant-scoped REST endpoints with transparent dev fixture fallback.
+// Connects strictly to authenticated, tenant-scoped PostgreSQL REST APIs.
+// Silent fixture fallbacks are removed: empty DB returns [], API errors throw.
 
 import {
   Resident,
@@ -14,106 +15,80 @@ import {
   Donation,
   DailyActivity,
 } from "@/types";
-import {
-  DEV_FIXTURE_RESIDENTS,
-  DEV_FIXTURE_RESCUES,
-  DEV_FIXTURE_ADMISSIONS,
-  DEV_FIXTURE_TASKS,
-  DEV_FIXTURE_DAILY_STATS,
-  DEV_FIXTURE_CURRENT_USER,
-  DEV_FIXTURE_USERS,
-  DEV_FIXTURE_ATTENDANCE,
-  DEV_FIXTURE_VISITS,
-  DEV_FIXTURE_ROOMS,
-  DEV_FIXTURE_DOCUMENTS,
-  DEV_FIXTURE_DONATIONS,
-  DEV_FIXTURE_DAILY_ACTIVITIES,
-} from "./fixtures";
 
-const delay = (ms: number = 80) => new Promise((resolve) => setTimeout(resolve, ms));
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
+  return data as T;
+}
 
 export const dataService = {
-  // Current user
-  async getCurrentUser(): Promise<User> {
-    try {
-      const res = await fetch("/api/auth/me");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.authenticated && data.session) {
-          const s = data.session;
-          return {
-            id: s.userId,
-            email: s.email,
-            displayName: s.fullName,
-            role: s.roleSlug === "admin" ? "ngo_admin" : (s.roleSlug || "staff"),
-            organizationId: s.activeOrgId || "org-01",
-            branchId: s.branchId || "branch-01",
-            status: "active",
-          };
-        }
-      }
-    } catch {}
-    return { ...DEV_FIXTURE_CURRENT_USER };
+  async getCurrentUser(): Promise<User | null> {
+    const res = await fetch("/api/auth/me");
+    if (!res.ok) {
+      return null;
+    }
+    const data = await res.json();
+    if (data.authenticated && data.session) {
+      const s = data.session;
+      return {
+        id: s.userId,
+        email: s.email,
+        displayName: s.fullName,
+        role: s.roleSlug === "admin" ? "ngo_admin" : (s.roleSlug || "staff"),
+        organizationId: s.activeOrgId || "",
+        branchId: s.branchId || undefined,
+        status: "active",
+      };
+    }
+    return null;
   },
 
-  // Users / Staff
   async getUsers(): Promise<User[]> {
-    await delay(50);
-    return [...DEV_FIXTURE_USERS];
+    const data = await fetchJson<{ members: any[] }>("/api/staff");
+    return (data.members || []).map((m) => ({
+      id: m.user_id,
+      email: m.email,
+      displayName: m.full_name,
+      phone: m.phone || undefined,
+      role: m.role_slug === "admin" ? "ngo_admin" : m.role_slug,
+      organizationId: "",
+      branchId: m.branch_id || undefined,
+      status: m.status === "active" ? "active" : "suspended",
+    }));
   },
 
-  // Dashboard Stats
   async getDashboardSummary() {
-    await delay(50);
-    return { ...DEV_FIXTURE_DAILY_STATS };
+    const data = await fetchJson<{ report: any }>("/api/reports");
+    return data.report;
   },
 
-  // Residents (Connected to PostgreSQL RLS API)
   async getResidents(query?: { search?: string; status?: string }): Promise<Resident[]> {
-    try {
-      const params = new URLSearchParams();
-      if (query?.search) params.set("search", query.search);
-      if (query?.status) params.set("status", query.status);
+    const params = new URLSearchParams();
+    if (query?.search) params.set("search", query.search);
+    if (query?.status) params.set("status", query.status);
 
-      const res = await fetch(`/api/residents?${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.residents && data.residents.length > 0) {
-          return data.residents.map((r: any) => ({
-            id: r.id,
-            organizationId: r.organization_id || "org-01",
-            branchId: r.branch_id || "branch-01",
-            residentNumber: r.resident_number,
-            fullName: r.full_name,
-            preferredName: r.preferred_name,
-            gender: r.gender,
-            dateOfBirthIsEstimated: false,
-            identityStatus: r.identity_status || "verified",
-            residentStatus: r.resident_status || "active",
-            admittedAt: r.admitted_at,
-            roomNumber: r.room_number,
-            bedCode: r.bed_code,
-            primaryDiagnosis: r.primary_diagnosis,
-            createdAt: r.created_at,
-          }));
-        }
-      }
-    } catch {}
-
-    // Fallback to development fixtures if offline or database empty
-    let list = [...DEV_FIXTURE_RESIDENTS];
-    if (query?.search) {
-      const q = query.search.toLowerCase();
-      list = list.filter(
-        (r) =>
-          r.fullName.toLowerCase().includes(q) ||
-          r.residentNumber.toLowerCase().includes(q)
-      );
-    }
-    if (query?.status && query.status !== "all") {
-      list = list.filter((r) => r.residentStatus === query.status);
-    }
-    return list;
+    const data = await fetchJson<{ residents: any[] }>(`/api/residents?${params.toString()}`);
+    return (data.residents || []).map((r) => ({
+      id: r.id,
+      organizationId: r.organization_id || "",
+      branchId: r.branch_id || undefined,
+      residentNumber: r.resident_number,
+      fullName: r.full_name,
+      preferredName: r.preferred_name,
+      gender: r.gender,
+      dateOfBirthIsEstimated: false,
+      identityStatus: r.identity_status || "unverified",
+      residentStatus: r.resident_status || "active",
+      admittedAt: r.admitted_at,
+      roomNumber: r.room_number,
+      bedCode: r.bed_code,
+      primaryDiagnosis: r.primary_diagnosis,
+      createdAt: r.created_at,
+    }));
   },
 
   async getResidentById(id: string): Promise<Resident | null> {
@@ -121,137 +96,129 @@ export const dataService = {
     return residents.find((r) => r.id === id) || null;
   },
 
-  async createResident(data: Partial<Resident>): Promise<Resident> {
-    try {
-      const res = await fetch("/api/residents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        if (result.resident) {
-          return {
-            id: result.resident.id,
-            organizationId: result.resident.organization_id,
-            branchId: result.resident.branch_id || "branch-01",
-            residentNumber: result.resident.resident_number,
-            fullName: result.resident.full_name,
-            gender: result.resident.gender,
-            dateOfBirthIsEstimated: false,
-            identityStatus: "verified",
-            residentStatus: result.resident.resident_status || "active",
-            roomNumber: result.resident.room_number,
-            bedCode: result.resident.bed_code,
-            createdAt: result.resident.created_at,
-          };
-        }
-      }
-    } catch {}
-
-    const newResident: Resident = {
-      id: `res-${Date.now()}`,
-      organizationId: "org-01",
-      branchId: "branch-01",
-      residentNumber: `RES-${Math.floor(100 + Math.random() * 900)}`,
-      fullName: data.fullName || "New Resident",
-      gender: data.gender || "male",
+  async createResident(payload: Partial<Resident>): Promise<Resident> {
+    const data = await fetchJson<{ resident: any }>("/api/residents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const r = data.resident;
+    return {
+      id: r.id,
+      organizationId: r.organization_id,
+      branchId: r.branch_id || undefined,
+      residentNumber: r.resident_number,
+      fullName: r.full_name,
+      gender: r.gender,
       dateOfBirthIsEstimated: false,
-      identityStatus: "unverified",
-      residentStatus: "active",
-      createdAt: new Date().toISOString(),
-      ...data,
+      identityStatus: r.identity_status || "unverified",
+      residentStatus: r.resident_status || "active",
+      roomNumber: r.room_number,
+      bedCode: r.bed_code,
+      createdAt: r.created_at,
     };
-    return newResident;
   },
 
-  // Rescue Cases
   async getRescueCases(statusFilter?: string): Promise<RescueCase[]> {
-    await delay(60);
-    if (statusFilter && statusFilter !== "all") {
-      return DEV_FIXTURE_RESCUES.filter((c) => c.caseStatus === statusFilter);
-    }
-    return [...DEV_FIXTURE_RESCUES];
+    const params = new URLSearchParams();
+    if (statusFilter && statusFilter !== "all") params.set("status", statusFilter);
+    const data = await fetchJson<{ rescueCases: any[] }>(`/api/rescue-cases?${params.toString()}`);
+    return (data.rescueCases || []).map((rc) => ({
+      id: rc.id,
+      rescueNumber: rc.case_number,
+      organizationId: rc.organization_id || "",
+      branchId: rc.branch_id || "",
+      personName: rc.person_identifier,
+      approximateAge: rc.approximate_age || undefined,
+      gender: rc.gender || undefined,
+      rescueSource: "public_call",
+      reportedByPhone: rc.reported_by_phone || undefined,
+      rescuedAt: rc.created_at,
+      location: { addressText: rc.rescue_location, captureSource: "manual", capturedAt: rc.created_at },
+      initialConditionNotes: rc.current_health_status || undefined,
+      caseStatus: rc.status,
+      urgencyLevel: rc.urgency_level,
+      assignedTeamLeaderName: rc.team_leader_name || undefined,
+      admittedResidentId: rc.admitted_resident_id || undefined,
+      createdAt: rc.created_at,
+    }));
   },
 
-  // Admissions
   async getAdmissions(): Promise<Admission[]> {
-    try {
-      const res = await fetch("/api/admissions");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.admissions && data.admissions.length > 0) {
-          return data.admissions;
-        }
-      }
-    } catch {}
-    return [...DEV_FIXTURE_ADMISSIONS];
+    const data = await fetchJson<{ admissions: any[] }>("/api/admissions");
+    return data.admissions || [];
   },
 
-  // Attendance
   async getAttendance(date?: string): Promise<AttendanceEntry[]> {
-    try {
-      const query = date ? `?date=${date}` : "";
-      const res = await fetch(`/api/attendance${query}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.attendance && data.attendance.length > 0) {
-          return data.attendance;
-        }
-      }
-    } catch {}
-    return [...DEV_FIXTURE_ATTENDANCE];
+    const query = date ? `?date=${encodeURIComponent(date)}` : "";
+    const data = await fetchJson<{ attendance: any[] }>(`/api/attendance${query}`);
+    return data.attendance || [];
   },
 
-  // Rooms & Facilities
   async getRooms(): Promise<Room[]> {
-    await delay(50);
-    return [...DEV_FIXTURE_ROOMS];
+    const data = await fetchJson<{ rooms: any[]; beds: any[] }>("/api/facilities");
+    return (data.rooms || []).map((rm) => ({
+      id: rm.id,
+      buildingName: rm.ward_name,
+      roomNumber: rm.room_number,
+      floorLabel: `Floor ${rm.floor_number || 1}`,
+      capacity: rm.total_beds,
+      occupiedCount: (data.beds || []).filter(
+        (b) => b.room_id === rm.id && (b.status === "occupied" || b.current_resident_id)
+      ).length,
+      status: rm.status === "maintenance" ? "maintenance" : rm.status === "full" ? "full" : "available",
+    }));
   },
 
-  // Documents
   async getDocuments(): Promise<DocumentItem[]> {
-    try {
-      const res = await fetch("/api/documents");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.documents && data.documents.length > 0) {
-          return data.documents;
-        }
-      }
-    } catch {}
-    return [...DEV_FIXTURE_DOCUMENTS];
+    const data = await fetchJson<{ documents: any[] }>("/api/documents");
+    return data.documents || [];
   },
 
-  // Donations
   async getDonations(): Promise<Donation[]> {
-    try {
-      const res = await fetch("/api/finance/donations");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.donations && data.donations.length > 0) {
-          return data.donations;
-        }
-      }
-    } catch {}
-    return [...DEV_FIXTURE_DONATIONS];
+    const data = await fetchJson<{ donations: any[] }>("/api/finance/donations");
+    return data.donations || [];
   },
 
-  // Tasks
   async getTasks(): Promise<TaskItem[]> {
-    await delay(50);
-    return [...DEV_FIXTURE_TASKS];
+    const data = await fetchJson<{ tasks: any[] }>("/api/tasks");
+    return (data.tasks || []).map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description || undefined,
+      priority: t.priority,
+      status: t.status === "cancelled" ? "completed" : t.status,
+      dueAt: t.due_date || t.created_at,
+      assignedToName: t.assigned_to_name || "Unassigned",
+    }));
   },
 
-  // Visits
   async getVisits(): Promise<Visit[]> {
-    await delay(50);
-    return [...DEV_FIXTURE_VISITS];
+    const data = await fetchJson<{ visits: any[] }>("/api/visitors");
+    return (data.visits || []).map((v) => ({
+      id: v.id,
+      visitorId: v.visitor_id,
+      visitorName: v.visitor_name,
+      visitorPhone: v.visitor_phone,
+      residentId: v.resident_id || undefined,
+      residentName: v.resident_name || "General Visit",
+      relationship: v.relationship || "Visitor",
+      purpose: v.purpose || "",
+      entryAt: v.checked_in_at,
+      exitAt: v.checked_out_at || undefined,
+      recordedBy: v.logged_by_name || v.logged_by || "Staff",
+    }));
   },
 
-  // Daily Activities
   async getDailyActivities(): Promise<DailyActivity[]> {
-    await delay(50);
-    return [...DEV_FIXTURE_DAILY_ACTIVITIES];
+    const data = await fetchJson<{ entries: any[] }>("/api/diary");
+    return (data.entries || []).map((d) => ({
+      id: d.id,
+      activityDate: d.entry_date,
+      title: `${d.shift.charAt(0).toUpperCase() + d.shift.slice(1)} Shift Log`,
+      description: d.content,
+      createdByName: d.author_name || "Staff",
+      createdAt: d.created_at,
+    }));
   },
 };

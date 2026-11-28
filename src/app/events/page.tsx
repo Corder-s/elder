@@ -1,198 +1,154 @@
 "use client";
 
-import React, { useState } from "react";
-import {
-  CalendarDays,
-  Plus,
-  Clock,
-  MapPin,
-  ChevronLeft,
-  ChevronRight,
-  Heart,
-} from "lucide-react";
+import React, { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
+import { Calendar, Plus, ArrowLeft, MapPin, AlertCircle, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 
-interface EventItem {
-  id: string;
-  title: string;
-  time: string;
-  category: string;
-  color: string;
-}
-
-const DEV_EVENTS: EventItem[] = [
-  {
-    id: "ev-1",
-    title: "Basant Panchami Celebration",
-    time: "02 Feb, 10:00 AM",
-    category: "Cultural & Puja",
-    color: "bg-[#F3E8FF] text-[#6D28D9]",
-  },
-  {
-    id: "ev-2",
-    title: "Health Checkup Camp",
-    time: "05 Feb, 09:00 AM",
-    category: "Medical Clinic",
-    color: "bg-[#E0F2FE] text-[#0284C7]",
-  },
-  {
-    id: "ev-3",
-    title: "Weekly Bhajan Sandhya",
-    time: "07 Feb, 05:30 PM",
-    category: "Spiritual",
-    color: "bg-[#FEF3C7] text-[#D97706]",
-  },
-];
-
 export default function EventsPage() {
-  const [selectedDay, setSelectedDay] = useState(2);
+  const [events, setEvents] = useState<any[]>([]);
+  const [timeframe, setTimeframe] = useState<"all" | "upcoming" | "past">("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [location, setLocation] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [eventType, setEventType] = useState("celebration");
 
-  // Calendar dates for Feb 2025 (matching Reference Image 1 Screen 6)
-  const daysInMonth = Array.from({ length: 28 }, (_, i) => i + 1);
+  const loadEvents = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/events?timeframe=${timeframe}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load events");
+      setEvents(data.events || []);
+    } catch (err: any) {
+      setError(err.message);
+      setEvents([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [timeframe]);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const res = await fetch("/api/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, location, startTime, eventType }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create event");
+      setIsAddModalOpen(false);
+      setTitle("");
+      setLocation("");
+      loadEvents();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   return (
     <AppShell>
-      <div className="space-y-4 relative pb-10">
-        {/* Header */}
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-black text-[#17133A]">Events & Calendar</h2>
-          <span className="text-xs font-bold text-[#6D28D9] bg-[#F3E8FF] px-2.5 py-1 rounded-full">
-            Feb 2025
-          </span>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-white border border-[#E8E1F5] text-[#17133A] shadow-2xs"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <div>
+              <h1 className="text-lg font-black text-[#17133A]">Events &amp; Calendar</h1>
+              <p className="text-[11px] text-[#686581]">Ashram activities &amp; health camps</p>
+            </div>
+          </div>
+          <Button
+            onClick={() => setIsAddModalOpen(true)}
+            className="h-9 px-3 rounded-xl bg-[#6D28D9] text-white text-xs font-bold flex items-center gap-1.5"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>Add Event</span>
+          </Button>
         </div>
 
-        {/* Calendar Widget matching Reference Image 1 Screen 6 */}
-        <Card className="overflow-hidden">
-          <CardContent className="p-4">
-            {/* Month Header with chevrons */}
-            <div className="flex items-center justify-between pb-3 border-b border-[#E8E1F5] mb-3">
-              <ChevronLeft className="h-4 w-4 text-[#686581] cursor-pointer" />
-              <span className="text-xs font-bold text-[#17133A]">Feb 2025</span>
-              <ChevronRight className="h-4 w-4 text-[#686581] cursor-pointer" />
-            </div>
+        <div className="flex gap-2">
+          {(["all", "upcoming", "past"] as const).map((tf) => (
+            <button
+              key={tf}
+              onClick={() => setTimeframe(tf)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize ${
+                timeframe === tf ? "bg-[#6D28D9] text-white" : "bg-white border border-[#E8E1F5] text-[#686581]"
+              }`}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
 
-            {/* Days of Week */}
-            <div className="grid grid-cols-7 text-center text-[10px] font-bold text-[#686581] mb-2">
-              <span className="text-[#E11D48]">Sun</span>
-              <span>Mon</span>
-              <span>Tue</span>
-              <span>Wed</span>
-              <span>Thu</span>
-              <span>Fri</span>
-              <span>Sat</span>
-            </div>
+        {error && (
+          <div className="p-3.5 rounded-2xl bg-[#FFE4E6] border border-[#FDA4AF] text-[#E11D48] text-xs flex items-center justify-between">
+            <span className="flex items-center gap-2"><AlertCircle className="h-4 w-4" />{error}</span>
+            <button onClick={loadEvents} className="font-bold underline flex items-center gap-1"><RefreshCw className="h-3 w-3" />Retry</button>
+          </div>
+        )}
 
-            {/* Calendar Days Matrix (Feb 2025 starts on Saturday, so 6 blank offsets) */}
-            <div className="grid grid-cols-7 text-center gap-y-2 text-xs font-semibold">
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-              {/* Day 1 */}
-              <span className="py-1 text-[#686581]">1</span>
-
-              {/* Days 2 to 28 */}
-              {daysInMonth.slice(1).map((day) => {
-                const isSelected = selectedDay === day;
-                return (
-                  <button
-                    key={day}
-                    onClick={() => setSelectedDay(day)}
-                    className={`h-7 w-7 mx-auto rounded-full flex items-center justify-center transition-all ${
-                      isSelected
-                        ? "bg-[#6D28D9] text-white font-bold shadow-soft"
-                        : "text-[#17133A] hover:bg-[#F3E8FF]"
-                    }`}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Upcoming Events List matching Reference Image 1 Screen 6 */}
-        <div className="space-y-2.5">
-          <h4 className="text-xs font-bold text-[#686581] uppercase tracking-wider">
-            Upcoming Events
-          </h4>
-
-          <div className="space-y-2.5">
-            {DEV_EVENTS.map((event) => (
-              <div
-                key={event.id}
-                className="p-3.5 rounded-2xl bg-white border border-[#E8E1F5] shadow-card flex items-center justify-between"
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`h-10 w-10 rounded-2xl flex items-center justify-center ${event.color}`}>
-                    <CalendarDays className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h5 className="text-xs font-bold text-[#17133A]">
-                      {event.title}
-                    </h5>
-                    <span className="text-[11px] text-[#686581] mt-0.5 block">
-                      {event.time}
-                    </span>
-                  </div>
+        {loading ? (
+          <div className="p-8 text-center text-xs text-[#686581]">Loading calendar events...</div>
+        ) : events.length === 0 ? (
+          <EmptyState icon={<Calendar className="h-6 w-6" />} title="No events scheduled" description="Create an event to populate the home calendar." />
+        ) : (
+          <div className="space-y-3">
+            {events.map((ev) => (
+              <div key={ev.id} className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black text-[#17133A]">{ev.title}</h3>
+                  <Badge variant="purple">{ev.status}</Badge>
                 </div>
-
-                <span className="text-[10px] font-semibold text-[#6D28D9] bg-[#F3E8FF] px-2 py-0.5 rounded-full">
-                  {event.category}
-                </span>
+                <p className="text-xs text-[#686581]">
+                  {new Date(ev.start_time).toLocaleString()} • {ev.event_type}
+                </p>
+                {ev.location && (
+                  <p className="text-[11px] text-[#686581] flex items-center gap-1">
+                    <MapPin className="h-3 w-3 text-[#6D28D9]" />
+                    <span>{ev.location}</span>
+                  </p>
+                )}
               </div>
             ))}
           </div>
-        </div>
+        )}
 
-        {/* Floating Purple Plus Button matching Reference Image 1 Screen 6 */}
-        <div className="fixed bottom-20 right-6 z-30">
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="h-12 w-12 rounded-full bg-gradient-to-tr from-[#6D28D9] to-[#8B5CF6] text-white shadow-floating flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
-          >
-            <Plus className="h-6 w-6 stroke-[3]" />
-          </button>
-        </div>
+        <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Schedule Event">
+          <form onSubmit={handleCreate} className="space-y-3">
+            <Input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Event title" />
+            <Input required type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" />
+            <select value={eventType} onChange={(e) => setEventType(e.target.value)} className="w-full h-10 rounded-xl border border-[#E8E1F5] px-3 text-xs">
+              <option value="celebration">Celebration</option>
+              <option value="health_camp">Health Camp</option>
+              <option value="volunteer_drive">Volunteer Drive</option>
+            </select>
+            <Button type="submit" className="w-full bg-[#6D28D9] text-white rounded-xl h-10 text-xs font-bold">
+              Create Event
+            </Button>
+          </form>
+        </Modal>
       </div>
-
-      {/* Add Event Modal */}
-      <Modal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        title="Schedule Event or Medical Camp"
-        description="Add a community celebration or doctor clinic to the calendar."
-      >
-        <div className="space-y-3 text-xs">
-          <input
-            placeholder="Event Title (e.g. Free Eye Checkup Camp)"
-            className="w-full h-10 rounded-xl border border-[#E8E1F5] px-3 font-medium"
-          />
-          <input
-            placeholder="Date & Time (e.g. 10 Feb, 10:00 AM)"
-            className="w-full h-10 rounded-xl border border-[#E8E1F5] px-3 font-medium"
-          />
-          <input
-            placeholder="Location / Courtyard / Hall"
-            className="w-full h-10 rounded-xl border border-[#E8E1F5] px-3 font-medium"
-          />
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" size="sm" onClick={() => setIsAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={() => setIsAddModalOpen(false)}>
-              Schedule Event
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </AppShell>
   );
 }
