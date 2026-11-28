@@ -93,6 +93,23 @@ export default function SettingsPage() {
           <ChevronRight className="h-4 w-4 text-[#686581]" />
         </Link>
 
+        {/* Data Portability & Exports Link */}
+        <Link
+          href="/settings/exports"
+          className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card flex items-center justify-between hover:border-[#6D28D9] transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#F3E8FF] text-[#6D28D9]">
+              <Shield className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-[#17133A]">Data Portability & Exports</h3>
+              <p className="text-[11px] text-[#686581]">Download full NGO data & document archives</p>
+            </div>
+          </div>
+          <ChevronRight className="h-4 w-4 text-[#686581]" />
+        </Link>
+
         {/* System Settings List */}
         <div className="p-4 rounded-3xl bg-white border border-[#E8E1F5] shadow-card space-y-3">
           <h3 className="text-xs font-black text-[#17133A] uppercase tracking-wider">

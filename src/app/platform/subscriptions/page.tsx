@@ -10,18 +10,18 @@ export default function PlatformSubscriptionsPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const load = async (status = statusFilter) => {
+  const load = React.useCallback(async (status = "") => {
     setLoading(true);
     const qs = status ? `?status=${encodeURIComponent(status)}` : "";
     const res = await fetch(`/api/platform/subscriptions${qs}`);
     const json = await res.json();
     setSubs(json.subscriptions || []);
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    load();
-  }, []);
+    load(statusFilter);
+  }, [load, statusFilter]);
 
   const act = async (organizationId: string, action: string) => {
     setMsg(null);

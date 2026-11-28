@@ -215,7 +215,19 @@ export async function enforceStorageQuotaTx(
   }
 
   const sumRes = await client.query(
-    `SELECT COALESCE(SUM(file_size_bytes), 0) AS total_bytes FROM documents WHERE organization_id = $1`,
+    `
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN document_status = 'pending_upload' AND (upload_expires_at IS NULL OR upload_expires_at >= CURRENT_TIMESTAMP)
+          THEN GREATEST(reserved_bytes, file_size_bytes)
+        WHEN document_status IN ('pending_scan', 'available', 'archived')
+          THEN COALESCE(verified_size_bytes, file_size_bytes)
+        ELSE 0
+      END
+    ), 0) AS total_bytes
+    FROM documents
+    WHERE organization_id = $1 AND is_deleted = false
+    `,
     [organizationId]
   );
   const currentBytes = parseInt(sumRes.rows[0].total_bytes, 10);
@@ -274,7 +286,19 @@ export async function getOrganizationUsageSnapshot(organizationId: string): Prom
         [organizationId]
       ),
       client.query(
-        `SELECT COALESCE(SUM(file_size_bytes), 0) AS total_bytes FROM documents WHERE organization_id = $1`,
+        `
+        SELECT COALESCE(SUM(
+          CASE
+            WHEN document_status = 'pending_upload' AND (upload_expires_at IS NULL OR upload_expires_at >= CURRENT_TIMESTAMP)
+              THEN GREATEST(reserved_bytes, file_size_bytes)
+            WHEN document_status IN ('pending_scan', 'available', 'archived')
+              THEN COALESCE(verified_size_bytes, file_size_bytes)
+            ELSE 0
+          END
+        ), 0) AS total_bytes
+        FROM documents
+        WHERE organization_id = $1 AND is_deleted = false
+        `,
         [organizationId]
       ),
     ]);
